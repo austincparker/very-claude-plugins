@@ -119,7 +119,7 @@ async function sample($: EngineInterface) {
   const idle = await idleMs($, now)
   if (idle === null) return
   const cur = readSit(await $.store.get('sit'))
-  if (cur.updated !== prev.updated && cur.sampler !== state.sessionId) return
+  if (cur.updated !== prev.updated || cur.sampler !== prev.sampler) return
   const { sit, log } = step(prev, idle, now, state.cfg.awayMin * MINUTE)
   await $.store.set('sit', { ...sit, sampler: state.sessionId })
   if (readSit(await $.store.get('sit')).sampler !== state.sessionId) return
