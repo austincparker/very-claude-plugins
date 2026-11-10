@@ -106,8 +106,11 @@ test('the model sets and lists nudges through the tool', async ($, on) => {
   const list = await $.tool.call({ tool: TOOL })
   expect(list.result).toMatch(/#1 {2}12:20 \(in 20m\) {2}check the deploy/)
 
-  const cancel = await $.tool.call({ tool: TOOL, cancel: 'all' })
-  expect(cancel.result).toBe('Cancelled 1 nudge.')
+  const all = await $.tool.call({ tool: TOOL, cancel: 'all' })
+  expect(all.result).toMatch(/^Only the person cancels every nudge/)
+
+  const one = await $.tool.call({ tool: TOOL, cancel: '1' })
+  expect(one.result).toBe('Cancelled #1: check the deploy')
 })
 
 test('an agent launch after a long sit gets one break prompt per half hour', async ($, on) => {

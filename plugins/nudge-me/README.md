@@ -25,7 +25,7 @@ Nudges inside Claude Code: take a break, go to bed, and any reminder you set.
 | `/nudge report` | breaks and sits, per day |
 | `/nudge forget` | clear the sitting log and fired-nudge text |
 
-Claude gets a `nudge` tool with the same powers, so plain requests work. Nudge text is cut to 200 characters with control characters removed, and you can keep up to 100 nudges.
+Claude gets a `nudge` tool that sets, lists and cancels nudges one at a time, so plain requests work. Cancelling all of them takes your own `/nudge cancel all`. Nudge text is cut to 200 characters with control characters removed, and you can keep up to 100 nudges.
 
 ## Settings
 

@@ -22,7 +22,7 @@ const TOOL_DESCRIPTION = [
   "Sets, lists or cancels the person's nudges: reminders that show in Claude Code and as a desktop notification when due.",
   'Use it when they ask to be reminded or nudged later.',
   "`when` takes 'in 20m', 'in 1h30m', 'at 17:30', 'at 5pm', 'every 45m' or 'every day at 9:00', with `text` saying what to nudge about.",
-  "Pass `cancel` (an id, or 'all') to cancel. Pass nothing to list the nudges.",
+  "Pass `cancel` with a nudge's id to cancel that one; cancelling them all is the person's own /nudge cancel all. Pass nothing to list the nudges.",
 ].join(' ')
 
 const fresh = () => ({
@@ -264,6 +264,7 @@ async function answerTool($: EngineInterface, input: Record<string, unknown>): P
     return typeof v === 'string' ? v.trim() : ''
   }
   const now = await $.clock.now()
+  if (/^all$/i.test(str('cancel'))) return 'Only the person cancels every nudge, with /nudge cancel all. Cancel one by its id.'
   if (str('cancel')) return cancel($, str('cancel'))
   if (str('when')) return add($, `${str('when')} ${str('text')}`, now)
   return list($, now)
@@ -317,7 +318,7 @@ export const register: Register = (on, options) => {
         properties: {
           when: { type: 'string', description: "When: 'in 20m', 'at 17:30', 'every 45m', 'every day at 9:00'." },
           text: { type: 'string', description: 'What the nudge says.' },
-          cancel: { type: 'string', description: "A nudge id to cancel, or 'all'." },
+          cancel: { type: 'string', description: 'The id of the nudge to cancel.' },
         },
       },
     })
