@@ -122,6 +122,7 @@ async function sample($: EngineInterface) {
   if (cur.updated !== prev.updated && cur.sampler !== state.sessionId) return
   const { sit, log } = step(prev, idle, now, state.cfg.awayMin * MINUTE)
   await $.store.set('sit', { ...sit, sampler: state.sessionId })
+  if (readSit(await $.store.get('sit')).sampler !== state.sessionId) return
   if (log.length > 0) {
     const cutoff = localStamp(now - LOG_KEEP_MS)
     const kept = [...readLog(await $.store.get('log')), ...log].filter(r => r[0] >= cutoff)
@@ -136,7 +137,8 @@ async function ownsFiring($: EngineInterface, now: number): Promise<boolean> {
   const at = num(rec.at)
   if (typeof rec.id === 'string' && rec.id !== state.sessionId && at !== null && now - at < OWNER_MS) return false
   await $.store.set('owner', { id: state.sessionId, at: now })
-  return true
+  const back = await $.store.get('owner')
+  return back !== null && typeof back === 'object' && (back as Record<string, unknown>).id === state.sessionId
 }
 
 async function takeDue($: EngineInterface, now: number): Promise<Nudge[]> {
