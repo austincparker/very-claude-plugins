@@ -23,8 +23,9 @@ Nudges inside Claude Code: take a break, go to bed, and any reminder you set.
 | `/nudge list` | your nudges and how long you've sat |
 | `/nudge cancel <id>` / `cancel all` | drop nudges |
 | `/nudge report` | breaks and sits, per day |
+| `/nudge forget` | clear the sitting log and fired-nudge text |
 
-Claude gets a `nudge` tool with the same powers, so plain requests work.
+Claude gets a `nudge` tool with the same powers, so plain requests work. Nudge text is cut to 200 characters with control characters removed, and you can keep up to 100 nudges.
 
 ## Settings
 
@@ -40,7 +41,7 @@ Install asks for these; change them later in `/config`.
 
 ## How it knows you're sitting
 
-On macOS it reads the system idle time (`ioreg`), on Linux `xprintidle` when installed, and otherwise the time since your last prompt. Five minutes with no keyboard or mouse input counts as a break. Nothing leaves your machine: nudges and the sitting log live in Claude Code's plugin store.
+On macOS it reads the system idle time (`ioreg`), on Linux `xprintidle` when installed, and otherwise the time since your last prompt. Five minutes with no keyboard or mouse input counts as a break. Nothing leaves your machine, but some of it is written down in Claude Code's plugin store: your nudges, the text of nudges that fired in the last ten minutes, and a sitting log (one row per sit and per break, minute resolution, kept 90 days and at most 5000 rows). `/nudge forget` clears the log and the fired-nudge text. A gap with no session open counts as a break, so hours of work with Claude Code closed read as one.
 
 Nudges fire while a Claude Code session is open. One that came due while none was open fires at the next session, marked late.
 

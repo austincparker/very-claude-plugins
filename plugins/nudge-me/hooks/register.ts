@@ -2,7 +2,7 @@ import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 
 import { MINUTE, USAGE, afterFiring, describe, hourLabel, isBedtime, parseWhen, span } from './schedule'
 import type { Nudge } from './schedule'
-import { SAMPLE_MS, isSampler, num, readLog, readSit, report, satMinutes, step } from './sitting'
+import { SAMPLE_MS, isSampler, localStamp, num, readLog, readSit, report, satMinutes, step } from './sitting'
 
 type Config = { sitMin: number; awayMin: number; bedtime: boolean; bedHour: number; wakeHour: number }
 type Fired = { id: number; text: string; at: number }
@@ -12,6 +12,10 @@ const TICK_MS = 15_000
 const AGENT_EVERY_MS = 30 * MINUTE
 const SHOW_FIRED_MS = 10 * MINUTE
 const LOG_MAX = 5000
+const LOG_KEEP_MS = 90 * 24 * 60 * MINUTE
+const NUDGES_MAX = 100
+const OWNER_MS = 3 * TICK_MS
+const REPROBE_MS = 10 * MINUTE
 const TOOL = 'mcp__nudge-me__nudge'
 
 const TOOL_DESCRIPTION = [
@@ -21,14 +25,26 @@ const TOOL_DESCRIPTION = [
   "Pass `cancel` (an id, or 'all') to cancel. Pass nothing to list the nudges.",
 ].join(' ')
 
-const state = {
+const fresh = () => ({
   cfg: { sitMin: 30, awayMin: 5, bedtime: true, bedHour: 23, wakeHour: 5 } as Config,
   source: undefined as Source | undefined,
+  probedAt: 0,
   sessionId: '',
   lastAgentNudge: 0,
   lastStatus: undefined as string | undefined,
   ticks: 0,
   isBusy: false,
+  isPrompting: false,
+  stop: undefined as (() => void) | undefined,
+  queue: Promise.resolve() as Promise<unknown>,
+})
+const state = fresh()
+
+/** Runs `fn` after every earlier locked call: store read-modify-writes never interleave in this process. */
+function locked<T>(fn: () => Promise<T>): Promise<T> {
+  const next = state.queue.then(fn, fn)
+  state.queue = next.catch(() => undefined)
+  return next
 }
 
 function config(options: PluginOptions): Config {
@@ -81,7 +97,8 @@ async function osIdleMs($: EngineInterface, which: 'ioreg' | 'xprintidle'): Prom
 }
 
 async function idleMs($: EngineInterface, now: number): Promise<number | null> {
-  if (state.source === undefined) {
+  if (state.source === undefined || (state.source === 'prompts' && now - state.probedAt >= REPROBE_MS)) {
+    state.probedAt = now
     for (const which of ['ioreg', 'xprintidle'] as const) {
       const ms = await osIdleMs($, which)
       if (ms !== null) {
@@ -101,19 +118,42 @@ async function sample($: EngineInterface) {
   if (!isSampler(prev, state.sessionId, now)) return
   const idle = await idleMs($, now)
   if (idle === null) return
+  const cur = readSit(await $.store.get('sit'))
+  if (cur.updated !== prev.updated && cur.sampler !== state.sessionId) return
   const { sit, log } = step(prev, idle, now, state.cfg.awayMin * MINUTE)
   await $.store.set('sit', { ...sit, sampler: state.sessionId })
-  if (log.length > 0) await $.store.set('log', [...readLog(await $.store.get('log')), ...log].slice(-LOG_MAX))
+  if (log.length > 0) {
+    const cutoff = localStamp(now - LOG_KEEP_MS)
+    const kept = [...readLog(await $.store.get('log')), ...log].filter(r => r[0] >= cutoff)
+    await $.store.set('log', kept.slice(-LOG_MAX))
+  }
+}
+
+/** One session at a time fires nudges: the one that last claimed the store within a few ticks. */
+async function ownsFiring($: EngineInterface, now: number): Promise<boolean> {
+  const o = await $.store.get('owner')
+  const rec = o !== null && typeof o === 'object' ? (o as Record<string, unknown>) : {}
+  const at = num(rec.at)
+  if (typeof rec.id === 'string' && rec.id !== state.sessionId && at !== null && now - at < OWNER_MS) return false
+  await $.store.set('owner', { id: state.sessionId, at: now })
+  return true
+}
+
+async function takeDue($: EngineInterface, now: number): Promise<Nudge[]> {
+  if (!(await ownsFiring($, now))) return []
+  const nudges = readNudges(await $.store.get('nudges'))
+  const due = nudges.filter(n => n.due <= now)
+  if (due.length === 0) return []
+  await $.store.set('nudges', nudges.flatMap(n => (n.due <= now ? afterFiring(n, now) : [n])))
+  const all = readFired(await $.store.get('fired'))
+  const shown = all.filter(f => now - f.at < SHOW_FIRED_MS)
+  await $.store.set('fired', [...shown, ...due.map(n => ({ id: n.id, text: n.text, at: now }))])
+  return due
 }
 
 async function fireDue($: EngineInterface) {
   const now = await $.clock.now()
-  const nudges = readNudges(await $.store.get('nudges'))
-  const due = nudges.filter(n => n.due <= now)
-  if (due.length === 0) return
-  await $.store.set('nudges', nudges.flatMap(n => (n.due <= now ? afterFiring(n, now) : [n])))
-  const shown = readFired(await $.store.get('fired')).filter(f => now - f.at < SHOW_FIRED_MS)
-  await $.store.set('fired', [...shown, ...due.map(n => ({ id: n.id, text: n.text, at: now }))])
+  const due = await locked(() => takeDue($, now))
   for (const n of due) {
     const late = now - n.due > 2 * MINUTE ? ` (due ${span(now - n.due)} ago)` : ''
     $.ui.toast(`nudge: ${n.text}${late}`, { timeoutMs: 15_000 })
@@ -124,9 +164,10 @@ async function fireDue($: EngineInterface) {
 async function refreshStatus($: EngineInterface) {
   const { cfg } = state
   const now = await $.clock.now()
-  const parts = readFired(await $.store.get('fired'))
-    .filter(f => now - f.at < SHOW_FIRED_MS)
-    .map(f => `nudge: ${f.text}`)
+  const all = readFired(await $.store.get('fired'))
+  const shown = all.filter(f => now - f.at < SHOW_FIRED_MS)
+  if (shown.length !== all.length) await locked(() => $.store.set('fired', shown))
+  const parts = shown.map(f => `nudge: ${f.text}`)
   const sat = satMinutes(readSit(await $.store.get('sit')), now)
   if (sat !== null && sat >= 2 * cfg.sitMin) parts.push(`sat ${sat}m · stand up`)
   else if (sat !== null && sat >= cfg.sitMin) parts.push(`sat ${sat}m`)
@@ -167,15 +208,22 @@ async function list($: EngineInterface, now: number): Promise<string> {
 async function add($: EngineInterface, input: string, now: number): Promise<string> {
   const when = parseWhen(input, now)
   if (typeof when === 'string') return when
-  const nudges = readNudges(await $.store.get('nudges'))
-  const id = Math.max(num(await $.store.get('nextId')) ?? 0, ...nudges.map(n => n.id)) + 1
-  const nudge: Nudge = { id, ...when }
-  await $.store.set('nudges', [...nudges, nudge])
-  await $.store.set('nextId', id)
-  return `Nudge #${id} set for ${describe(nudge, now)}: ${nudge.text}`
+  return locked(async () => {
+    const nudges = readNudges(await $.store.get('nudges'))
+    if (nudges.length >= NUDGES_MAX) return `You already have ${NUDGES_MAX} nudges. Cancel some first.`
+    const id = Math.max(num(await $.store.get('nextId')) ?? 0, ...nudges.map(n => n.id)) + 1
+    const nudge: Nudge = { id, ...when }
+    await $.store.set('nextId', id)
+    await $.store.set('nudges', [...nudges, nudge])
+    return `Nudge #${id} set for ${describe(nudge, now)}: ${nudge.text}`
+  })
 }
 
-async function cancel($: EngineInterface, which: string): Promise<string> {
+function cancel($: EngineInterface, which: string): Promise<string> {
+  return locked(() => cancelNow($, which))
+}
+
+async function cancelNow($: EngineInterface, which: string): Promise<string> {
   const nudges = readNudges(await $.store.get('nudges'))
   if (/^all$/i.test(which)) {
     await $.store.set('nudges', [])
@@ -188,12 +236,21 @@ async function cancel($: EngineInterface, which: string): Promise<string> {
   return `Cancelled #${id}: ${hit.text}`
 }
 
+async function forget($: EngineInterface): Promise<string> {
+  await locked(async () => {
+    await $.store.set('log', [])
+    await $.store.set('fired', [])
+  })
+  return 'Cleared the sitting log and the record of fired nudges.'
+}
+
 async function handle($: EngineInterface, args: string): Promise<string> {
   const a = args.trim()
   const now = await $.clock.now()
   if (a === '' || /^(list|ls)$/i.test(a)) return list($, now)
   if (/^report$/i.test(a)) return report(readLog(await $.store.get('log')))
   if (/^help$/i.test(a)) return USAGE
+  if (/^forget$/i.test(a)) return forget($)
   const m = /^(?:cancel|clear|remove|rm|delete)\s+(.+)$/i.exec(a)
   if (m) return cancel($, (m[1] ?? '').trim())
   return add($, a, now)
@@ -211,6 +268,16 @@ async function answerTool($: EngineInterface, input: Record<string, unknown>): P
 }
 
 async function breakPrompt($: EngineInterface) {
+  if (state.isPrompting) return
+  state.isPrompting = true
+  try {
+    await breakPromptNow($)
+  } finally {
+    state.isPrompting = false
+  }
+}
+
+async function breakPromptNow($: EngineInterface) {
   const now = await $.clock.now()
   const sat = satMinutes(readSit(await $.store.get('sit')), now)
   if (sat === null || sat < state.cfg.sitMin || now - state.lastAgentNudge < AGENT_EVERY_MS) return
@@ -227,6 +294,8 @@ async function noteInput($: EngineInterface) {
 }
 
 export const register: Register = (on, options) => {
+  state.stop?.()
+  Object.assign(state, fresh())
   state.cfg = config(options)
 
   on('session.start', async ($, e, next) => {
@@ -251,9 +320,17 @@ export const register: Register = (on, options) => {
     })
     if (e.isInteractive) {
       await $.store.set('lastInput', await $.clock.now())
-      $.clock.every(TICK_MS, () => void tick($))
+      state.stop?.()
+      const timer = $.clock.every(TICK_MS, () => void tick($))
+      state.stop = () => timer.cancel()
       void tick($)
     }
+    return next(e)
+  })
+
+  on('session.end', async ($, e, next) => {
+    state.stop?.()
+    state.stop = undefined
     return next(e)
   })
 

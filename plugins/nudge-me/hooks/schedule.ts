@@ -15,8 +15,12 @@ export type When = { due: number; everyMs?: number; daily?: string; text: string
 
 export const USAGE = [
   'Usage: /nudge in 20m <text> | at 17:30 <text> | every 45m <text> | every day at 9:00 <text>',
-  '       /nudge list | cancel <id> | cancel all | report',
+  '       /nudge list | cancel <id> | cancel all | report | forget',
 ].join('\n')
+
+const MAX_MS = 365 * DAY
+const MAX_PARTS = 10
+export const TEXT_MAX = 200
 
 const UNITS: Record<string, number> = { s: 1000, m: MINUTE, h: HOUR, d: DAY }
 const DURATION = /^(\d+(?:\.\d+)?)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)(?![a-z])\s*/i
@@ -25,12 +29,13 @@ const CLOCK = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?=\s|$)\s*/i
 function parseDuration(input: string): { ms: number; rest: string } | null {
   let rest = input
   let ms = 0
-  for (let m = DURATION.exec(rest); m; m = DURATION.exec(rest)) {
+  let parts = 0
+  for (let m = DURATION.exec(rest); m && parts++ < MAX_PARTS; m = DURATION.exec(rest)) {
     const unit = UNITS[(m[2] ?? '').charAt(0).toLowerCase()] ?? 0
     ms += Number(m[1]) * unit
-    rest = rest.slice(m[0].length).replace(/^(and|,)\s*/i, '')
+    rest = rest.slice(m[0].length).replace(/^(?:and\b|,)\s*/i, '')
   }
-  return ms > 0 ? { ms: Math.round(ms), rest } : null
+  return ms > 0 ? { ms: ms > MAX_MS ? Number.POSITIVE_INFINITY : Math.round(ms), rest } : null
 }
 
 function parseClock(input: string): { hhmm: string; rest: string } | null {
@@ -56,8 +61,11 @@ export function nextAt(hhmm: string, now: number): number {
 }
 
 function cleanText(rest: string): string {
-  return rest.trim().replace(/^(to|that|:|-)\s+/i, '').trim()
+  const flat = rest.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/ {2,}/g, ' ').trim()
+  return flat.replace(/^(to|that|:|-)\s+/i, '').trim().slice(0, TEXT_MAX)
 }
+
+const TOO_FAR = 'That is more than a year away. Keep nudges within a year.'
 
 /** Reads a `/nudge` schedule (`in 20m ...`, `at 5pm ...`, `every 45m ...`, `every day at 9:00 ...`), or says what is wrong. */
 export function parseWhen(input: string, now: number): When | string {
@@ -71,12 +79,14 @@ export function parseWhen(input: string, now: number): When | string {
   if ((m = /^every\s+/i.exec(s))) {
     const dur = parseDuration(s.slice(m[0].length))
     if (!dur) return `I couldn't read how often in "${s}". Try "every 45m drink water".`
+    if (dur.ms > MAX_MS) return TOO_FAR
     if (dur.ms < MINUTE) return 'A repeating nudge needs at least a minute between nudges.'
     return withText({ due: now + dur.ms, everyMs: dur.ms }, dur.rest)
   }
   if ((m = /^in\s+/i.exec(s))) {
     const dur = parseDuration(s.slice(m[0].length))
     if (!dur) return `I couldn't read how long in "${s}". Try "in 20m check the deploy".`
+    if (dur.ms > MAX_MS) return TOO_FAR
     return withText({ due: now + dur.ms }, dur.rest)
   }
   if ((m = /^at\s+/i.exec(s))) {

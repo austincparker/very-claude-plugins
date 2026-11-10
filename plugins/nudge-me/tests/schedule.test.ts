@@ -89,3 +89,16 @@ test('bedtime wraps past midnight', async () => {
   expect(isBedtime(3, 4, 4)).toBe(false)
   expect([0, 9, 12, 23].map(hourLabel)).toEqual(['midnight', '9am', 'noon', '11pm'])
 })
+
+test('a text that starts like a connector keeps its first word', async () => {
+  expect(when('in 10m android update').text).toBe('android update')
+  expect(when("in 5m andrew's birthday").text).toBe("andrew's birthday")
+  expect(when('in 1h and 5m call back').due).toBe(NOON + 65 * MINUTE)
+})
+
+test('a duration past a year is refused, and control characters and length are cleaned', async () => {
+  expect(parseWhen(`in ${'9'.repeat(400)}d x`, NOON)).toMatch(/more than a year/)
+  expect(parseWhen('every 400d x', NOON)).toMatch(/more than a year/)
+  expect(when('in 5m \u001b[31mred\u0007 alert').text).toBe('[31mred alert')
+  expect(when(`in 5m ${'a'.repeat(500)}`).text.length).toBe(200)
+})

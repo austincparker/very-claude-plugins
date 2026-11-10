@@ -156,3 +156,28 @@ test('a long idle is a break: the sit count clears', async ($, on) => {
   const report = await nudge($, 'report')
   expect(report.text).toMatch(/2026-11-10\s+0\s+44m\s+44m/)
 })
+
+test('concurrent adds get distinct ids', async ($, on) => {
+  world(on, localAt(12))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: false })
+  const [a, b] = await Promise.all([nudge($, 'in 5m one'), nudge($, 'in 6m two')])
+  expect(a.text).toMatch(/^Nudge #1 /)
+  expect(b.text).toMatch(/^Nudge #2 /)
+})
+
+test('a session that does not hold the firing claim stays quiet', async ($, on) => {
+  const now = localAt(12)
+  const nudges = [{ id: 1, text: 'tea', due: now - 1000 }]
+  const { clock, shown } = world(on, now, { nudges, owner: { id: 'session-b', at: now } })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  expect(shown.toasts).toEqual([])
+})
+
+test('/nudge forget clears the sitting log', async ($, on) => {
+  world(on, localAt(12), { log: [['2026-11-10T10:00', 'sit', 40]] })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: false })
+  expect((await nudge($, 'report')).text).toMatch(/2026-11-10/)
+  await nudge($, 'forget')
+  expect((await nudge($, 'report')).text).toMatch(/^No sitting log/)
+})
