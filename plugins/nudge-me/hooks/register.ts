@@ -297,7 +297,8 @@ async function noteInput($: EngineInterface) {
 
 export const register: Register = (on, options) => {
   state.stop?.()
-  Object.assign(state, fresh())
+  const { queue } = state
+  Object.assign(state, fresh(), { queue })
   state.cfg = config(options)
 
   on('session.start', async ($, e, next) => {
