@@ -1,0 +1,47 @@
+{
+  "name": "nudge-me",
+  "version": "0.1.0",
+  "description": "Nudges in Claude Code: take a break, go to bed, and any reminder you set with /nudge or by asking Claude.",
+  "author": { "name": "Austin Parker" },
+  "license": "MIT",
+  "userConfig": {
+    "sit_minutes": {
+      "type": "number",
+      "title": "Break nudge after (minutes)",
+      "description": "Unbroken time at the keyboard before the status line and agent launches nudge a break. The status line gets louder at twice this.",
+      "default": 30,
+      "min": 5,
+      "max": 240
+    },
+    "away_minutes": {
+      "type": "number",
+      "title": "A break is (minutes)",
+      "description": "Time with no keyboard or mouse input that counts as a break.",
+      "default": 5,
+      "min": 1,
+      "max": 60
+    },
+    "bedtime_nudge": {
+      "type": "boolean",
+      "title": "Bedtime nudge",
+      "description": "Show a wrap-up nudge in the status line between bedtime and wake-up.",
+      "default": true
+    },
+    "bedtime_hour": {
+      "type": "number",
+      "title": "Bedtime (hour, 0-23)",
+      "description": "Local hour the bedtime nudge starts.",
+      "default": 23,
+      "min": 0,
+      "max": 23
+    },
+    "wake_hour": {
+      "type": "number",
+      "title": "Wake-up (hour, 0-23)",
+      "description": "Local hour the bedtime nudge ends.",
+      "default": 5,
+      "min": 0,
+      "max": 23
+    }
+  }
+}
