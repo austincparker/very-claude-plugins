@@ -4,7 +4,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { MINUTE } from '../hooks/schedule'
 
-const TOOL = 'mcp__nudge-me__nudge'
+const TOOL = 'mcp__nudgewhen__nudge'
 
 /** Stands for the engine beneath the mod: a machine idle for `idleMs`, and a record of what the mod showed. */
 function world(on: On, now: number, entries: Record<string, unknown> = {}, idleMs = 1000) {
@@ -14,7 +14,7 @@ function world(on: On, now: number, entries: Record<string, unknown> = {}, idleM
   on('session.id', () => ({ value: 'session-a' }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', (_, e) => ({ value: { command: e.name } }))
-  on('tool.register', (_, e) => ({ value: { tool: `mcp__nudge-me__${e.name}` } }))
+  on('tool.register', (_, e) => ({ value: { tool: `mcp__nudgewhen__${e.name}` } }))
   on('process.run', () => ({
     value: {
       exitCode: 0,

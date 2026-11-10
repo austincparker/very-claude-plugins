@@ -16,7 +16,7 @@ const LOG_KEEP_MS = 90 * 24 * 60 * MINUTE
 const NUDGES_MAX = 100
 const OWNER_MS = 3 * TICK_MS
 const REPROBE_MS = 10 * MINUTE
-const TOOL = 'mcp__nudge-me__nudge'
+const TOOL = 'mcp__nudgewhen__nudge'
 
 const TOOL_DESCRIPTION = [
   "Sets, lists or cancels the person's nudges: reminders that show in Claude Code and as a desktop notification when due.",
@@ -159,7 +159,7 @@ async function fireDue($: EngineInterface) {
   for (const n of due) {
     const late = now - n.due > 2 * MINUTE ? ` (due ${span(now - n.due)} ago)` : ''
     $.ui.toast(`nudge: ${n.text}${late}`, { timeoutMs: 15_000 })
-    $.ui.notify(`${n.text}${late}`, { title: 'nudge-me' }).catch(() => undefined)
+    $.ui.notify(`${n.text}${late}`, { title: 'nudgewhen' }).catch(() => undefined)
   }
 }
 
@@ -191,7 +191,7 @@ async function tick($: EngineInterface) {
     await fireDue($)
     await refreshStatus($)
   } catch (err) {
-    $.ui.log(`nudge-me: ${String(err)}`, { to: 'debug' })
+    $.ui.log(`nudgewhen: ${String(err)}`, { to: 'debug' })
   } finally {
     state.isBusy = false
   }
@@ -342,7 +342,7 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: TOOL }, async ($, e) => ({
     result: await answerTool($, e as unknown as Record<string, unknown>),
-  })).catch((_$, _e, next) => ({ deny: `nudge-me failed: ${String(next.error)}` }))
+  })).catch((_$, _e, next) => ({ deny: `nudgewhen failed: ${String(next.error)}` }))
 
   on('prompt.submit', async ($, e, next) => {
     await noteInput($).catch(() => undefined)
