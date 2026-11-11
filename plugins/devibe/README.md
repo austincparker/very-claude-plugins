@@ -20,7 +20,7 @@ Shapes 1, 6 and 7: skills, hooks and one agent that catch AI narration defects i
 
 ## Hooks
 
-- PostToolUse on Write and Edit runs `hooks/asn_lint_hook.py`. It warns rather than denies: the classifier is keyword-based, so a deny would block correct edits.
+- PostToolUse on Write, Edit and MultiEdit runs `hooks/asn_lint_hook.py`. It warns rather than denies: the classifier is keyword-based, so a deny would block correct edits. Only findings in lines the edit wrote are reported, and they reach the model as additional context.
 - PreToolUse on publishing calls (GitHub, Gmail) and `Bash` runs `hooks/voice_gate.py`, which denies prose carrying measured tells. Fix the quoted span and send the same call again. A routing prompt on non-email publishing calls catches prose that never got the voice pass.
 - `Bash` cannot be matched by tool name, so every Bash call pays one Python start (about 20 ms). Append `[no-prose]` to a command that carries none.
 
@@ -28,7 +28,7 @@ Shapes 1, 6 and 7: skills, hooks and one agent that catch AI narration defects i
 
 - Stateless: it reads the prose out of the call and denies on measured tells. It holds no marker or TTL, because a permit would authorize a duration, not a document.
 - Every rule is data in `scripts/profiles/default.json`; `voice_gate.py` is the mechanism. A rule enters only with zero hits in the author's own writing and material hits in the model's. The profile also lists rules tested and rejected.
-- The em dash rule is the pair bracketing an aside, not the character.
+- The gate's em dash rule is the pair bracketing an aside, not the character. `final_check.py` (the grammar pass in `devibe:voice`) flags any single em dash.
 - `VOICE_PROFILE=/path/to/profile.json` points the gate at another profile. A missing or corrupt profile exits 2 rather than passing prose.
 - A wrapper adds local publish paths without forking: `voice_gate.register_local(publish_scripts=[...], prose_frontmatter_types=[...])`, then `voice_gate.main()`.
 
@@ -40,6 +40,6 @@ Shapes 1, 6 and 7: skills, hooks and one agent that catch AI narration defects i
 
 ## Tests
 
-`scripts/test_asn_lint.py`, `test_voice_gate.py`, `test_final_check.py` and `test_voice_code_spans.py` run in `.github/workflows/gates.yml`. A new case must fail under the mutation it was written for.
+`scripts/test_asn_lint.py`, `test_voice_gate.py`, `test_asn_lint_hook.py`, `test_final_check.py` and `test_voice_code_spans.py` run with `python3 <file>` or `python3 -m pytest <file>`. A new case must fail under the mutation it was written for.
 
 Requires `python3`.

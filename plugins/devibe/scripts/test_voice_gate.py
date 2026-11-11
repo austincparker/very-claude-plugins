@@ -25,7 +25,9 @@ import voice_gate  # noqa: E402
 # correctly denies either. Assembling it at runtime keeps the fixture honest.
 GB = "behavi" + "our"
 
-PROFILE = voice_gate.load_profile()
+# Hermetic: the shipped profile, whatever the caller's shell exports.
+os.environ.pop("VOICE_PROFILE", None)
+PROFILE = voice_gate.load_profile(voice_gate.DEFAULT_PROFILE)
 RULES = voice_gate.build_rules(PROFILE)
 
 
@@ -36,7 +38,7 @@ def fire(text):
 
 def run_hook(tool, tool_input, env=None):
     """Invoke the gate as the hook runs it. Returns (exit_code, decision|None)."""
-    e = dict(os.environ)
+    e = {k: v for k, v in os.environ.items() if k != "VOICE_PROFILE"}
     if env:
         e.update(env)
     p = subprocess.run(
@@ -281,8 +283,8 @@ class TestHookMatcherTracksTheGate(unittest.TestCase):
         or removed MCP_GATED branch slips past it in silence. Equality cannot.
         """
         inner = voice_gate.MCP_GATED.pattern.lstrip("^").rstrip("$")
-        self.assertEqual(self.MATCHER, "^(?:" + inner + "|Bash)$")
-        # The detector also takes Bash; the routing prompt takes the MCP tools
+        self.assertEqual(self.MATCHER, "^(?:" + inner + "|Bash|Write|Edit|MultiEdit|NotebookEdit)$")
+        # The detector also takes Bash and the file-writing tools; the routing prompt takes the MCP tools
         # except Gmail. Both are derived, so neither can drift from the gate
         # independently.
         self.assertEqual(len(self.GMAIL_BRANCH.findall(inner)), 1)
@@ -307,8 +309,8 @@ class TestHookMatcherTracksTheGate(unittest.TestCase):
             self.assertTrue(m.match(tool), f"gate judges {tool}; matcher never fires on it")
 
     def test_the_routing_prompt_skips_artifact_publishes(self):
-        # The prompt denied voiced and unvoiced pages alike. Pages are gated
-        # outside this plugin, outside this plugin.
+        # The routing prompt cannot tell a voiced page from an unvoiced one, so
+        # artifact publishes never reach it.
         m = re.compile(self.PROMPT_MATCHER)
         for tool in ("Artifact", "mcp__claude-artifacts__publish_files",
                      "mcp__claude-artifacts__publish_version",
@@ -539,7 +541,7 @@ class TestMailSubjectIsJudged(unittest.TestCase):
         self.assertIn("It is worth noting that this fixes the bug", blobs)
 
 
-class TestNumericRangeAlreadyHandlesLargeNumbers(unittest.TestCase):
+class TestNumericRangesStayRanges(unittest.TestCase):
     """Pinning case: a range is still a range when both numbers run longer
     than one digit, and when a sentence carries two of them."""
 
@@ -616,6 +618,237 @@ class TestEndToEnd(unittest.TestCase):
         p = subprocess.run([sys.executable, GATE], input="not json", capture_output=True, text=True)
         self.assertEqual(p.returncode, 0)
         self.assertEqual(p.stdout.strip(), "")
+
+
+def run_raw(stdin_text, env=None):
+    e = {k: v for k, v in os.environ.items() if k != "VOICE_PROFILE"}
+    if env:
+        e.update(env)
+    return subprocess.run([sys.executable, GATE], input=stdin_text,
+                          capture_output=True, text=True, env=e)
+
+
+# Two tells at once, assembled at runtime so this file carries none literally.
+TELL = "It is worth noting that the job" + "—" + "which is stateless" + "—" + "is done."
+
+
+def bash_findings(cmd):
+    blobs = voice_gate.prose_blobs("Bash", {"command": cmd})
+    return len(blobs), [f for b in blobs for f in voice_gate.detect(b, RULES)]
+
+
+class TestGhApiAndDiscordProse(unittest.TestCase):
+    def test_gh_api_field_value_is_judged(self):
+        _, found = bash_findings(f'gh api repos/o/r/issues/1/comments -f body="{TELL}"')
+        self.assertTrue(found)
+
+    def test_gh_api_attached_short_flags_are_gated(self):
+        _, found = bash_findings(f'gh api -XPOST repos/o/r/issues/1/comments -fbody="{TELL}"')
+        self.assertTrue(found)
+
+    def test_gh_api_body_from_file_is_read(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+            f.write(TELL)
+            path = f.name
+        try:
+            _, found = bash_findings(f"gh api repos/o/r/issues/1/comments -F body=@{path}")
+            self.assertTrue(found)
+        finally:
+            os.unlink(path)
+
+    def test_discord_content_field_is_judged(self):
+        _, found = bash_findings(
+            "curl -X POST https://discord.com/api/webhooks/1/x "
+            f"""-d '{{"content": "{TELL}"}}'""")
+        self.assertTrue(found)
+
+    def test_an_apostrophe_does_not_cut_a_json_value(self):
+        blobs = voice_gate.JSON_PROSE_FIELD.findall(
+            """-d '{"content": "Don't panic. Second sentence."}'""")
+        self.assertEqual(blobs, [("Don't panic. Second sentence.", "")])
+
+    def test_global_flags_before_the_subcommand_still_gate(self):
+        _, found = bash_findings(f'gh -R o/r issue create --title "{TELL}"')
+        self.assertTrue(found)
+
+    def test_issue_close_comment_is_gated(self):
+        _, found = bash_findings(f'gh issue close 4 --comment "{TELL}"')
+        self.assertTrue(found)
+
+    def test_gist_description_is_gated(self):
+        _, found = bash_findings(f'gh gist create notes.md -d "{TELL}"')
+        self.assertTrue(found)
+
+    def test_pull_request_api_write_is_not_gated(self):
+        n, _ = bash_findings(f'gh api repos/o/r/pulls/3/comments -f body="{TELL}"')
+        self.assertEqual(n, 0)
+
+
+class TestBodyFileFallback(unittest.TestCase):
+    def test_an_unreadable_body_file_sends_the_whole_command_to_judgment(self):
+        cmd = "gh issue create --title ok --body-file ./does-not-exist.md"
+        self.assertIn(cmd, voice_gate.prose_blobs("Bash", {"command": cmd}))
+
+    def test_a_tilde_path_is_expanded(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "b.md"), "w") as f:
+                f.write(TELL)
+            home = os.environ.get("HOME")
+            os.environ["HOME"] = d
+            try:
+                _, found = bash_findings("gh issue create --title ok --body-file ~/b.md")
+            finally:
+                os.environ["HOME"] = home
+            self.assertTrue(found)
+
+    def test_a_quoted_path_with_spaces_is_read(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "my body.md")
+            with open(path, "w") as f:
+                f.write(TELL)
+            _, found = bash_findings(f'gh issue create --title ok --body-file "{path}"')
+            self.assertTrue(found)
+
+
+class TestHeredocAndNoProse(unittest.TestCase):
+    def test_a_line_starting_with_the_delimiter_does_not_end_the_body(self):
+        cmd = f"gh issue create --title ok --body-file - <<EOF\nEOFX is here\n{TELL}\nEOF\n"
+        _, found = bash_findings(cmd)
+        self.assertTrue(found)
+
+    def test_the_token_inside_an_ansi_c_quoted_value_does_not_exempt(self):
+        cmd = "gh issue create --title $'it\\'s [no-prose]' --body \"" + TELL + "\""
+        self.assertTrue(voice_gate.prose_blobs("Bash", {"command": cmd}))
+
+    def test_the_token_outside_quotes_exempts(self):
+        cmd = f'gh issue create --title "x" --body "{TELL}" [no-prose]'
+        self.assertEqual(voice_gate.prose_blobs("Bash", {"command": cmd}), [])
+
+
+class TestMultiEditAndLocalTypes(unittest.TestCase):
+    def setUp(self):
+        self._saved = list(voice_gate._LOCAL["prose_frontmatter_types"])
+        voice_gate.register_local(prose_frontmatter_types=["email-draft"])
+
+    def tearDown(self):
+        voice_gate._LOCAL["prose_frontmatter_types"][:] = self._saved
+
+    def test_multiedit_new_strings_are_read(self):
+        blobs = voice_gate.prose_blobs("MultiEdit", {"edits": [
+            {"new_string": "type: email-draft"}, {"new_string": TELL}]})
+        self.assertTrue(blobs)
+        self.assertTrue(any(voice_gate.detect(b, RULES) for b in blobs))
+
+    def test_other_types_are_not_gated(self):
+        self.assertEqual(voice_gate.prose_blobs("Write", {"content": "type: note\n" + TELL}), [])
+
+
+class TestDashPairs(unittest.TestCase):
+    def test_a_single_letter_word_between_dashes_still_pairs(self):
+        self.assertIn("paired dashes", fire("a—b—c"))
+
+    def test_a_numeric_range_is_not_a_pair(self):
+        self.assertNotIn("paired dashes", fire("Between 2024—2025 and 15—20 percent."))
+
+
+class TestRegexPerformance(unittest.TestCase):
+    def test_many_quoted_echo_arguments_do_not_backtrack(self):
+        args = " ".join(['"a b"'] * 30)
+        start = time.time()
+        voice_gate.prose_blobs("Bash", {"command": f"echo {args} x | gh issue create -F -"})
+        self.assertLess(time.time() - start, 1.0)
+
+
+class TestFailClosed(unittest.TestCase):
+    CMD = {"tool_name": "Bash", "tool_input": {"command": 'gh issue create --title "x"'}}
+
+    def profile(self, data):
+        f = tempfile.NamedTemporaryFile("wb", suffix=".json", delete=False)
+        f.write(data)
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        return f.name
+
+    def test_a_malformed_profile_blocks(self):
+        for body in (b'{"phrases": [{"nopattern": 1}]}', b'{"phrases": [{"pattern": "("}]}',
+                     b'{"phrases": 3}', b"\xff\xfe{}"):
+            with self.subTest(body=body):
+                p = run_raw(json.dumps(self.CMD), env={"VOICE_PROFILE": self.profile(body)})
+                self.assertEqual(p.returncode, 2, p.stderr)
+
+    def test_non_dict_payloads_do_not_crash(self):
+        for raw in ("[]", "null", "3", '"x"', '{"tool_name": "Bash", "tool_input": null}',
+                    '{"tool_name": "Bash", "tool_input": []}'):
+            with self.subTest(raw=raw):
+                p = run_raw(raw)
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertEqual(p.stdout.strip(), "")
+
+
+class TestMainEndToEnd(unittest.TestCase):
+    def test_bash_gh_body_file_denies(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+            f.write(TELL)
+            path = f.name
+        try:
+            self.assertEqual(
+                run_hook("Bash", {"command": f"gh issue create --title t --body-file {path}"}),
+                (0, "deny"))
+        finally:
+            os.unlink(path)
+
+    def test_gmail_denies(self):
+        self.assertEqual(run_hook("mcp__claude_ai_Gmail__create_draft", {"body": TELL}), (0, "deny"))
+
+    def test_ungated_calls_pass(self):
+        self.assertEqual(run_hook("Read", {"file_path": "/x"}), (0, None))
+        self.assertEqual(run_hook("Bash", {"command": f"echo {TELL}"}), (0, None))
+
+    def test_the_deny_reason_quotes_the_span_and_the_escape(self):
+        p = run_raw(json.dumps({"tool_name": "mcp__github__add_issue_comment",
+                                "tool_input": {"commentBody": TELL}}))
+        reason = json.loads(p.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("      > ", reason)
+        self.assertIn("worth noting", reason)
+        self.assertIn("Fix the flagged spans", reason)
+        self.assertIn(voice_gate.NO_PROSE_TOKEN, reason)
+
+    def test_at_most_three_hits_per_rule_are_quoted(self):
+        text = " ".join(["It is worth noting that a."] * 5)
+        p = run_raw(json.dumps({"tool_name": "mcp__github__add_issue_comment",
+                                "tool_input": {"commentBody": text}}))
+        reason = json.loads(p.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertEqual([l.strip() for l in reason.splitlines()].count("> worth noting"), 3)
+
+    def test_clean_prose_is_gated_and_clean(self):
+        tool, ti = "mcp__github__add_issue_comment", {"commentBody": "Fixed the import. All green."}
+        self.assertEqual(voice_gate.prose_blobs(tool, ti), ["Fixed the import. All green."])
+        self.assertEqual(run_hook(tool, ti), (0, None))
+
+
+class TestBuildRulesBranches(unittest.TestCase):
+    def names(self, profile):
+        return [n for n, _, _ in voice_gate.build_rules(profile)]
+
+    def test_an_empty_profile_has_no_rules(self):
+        self.assertEqual(self.names({}), [])
+
+    def test_disabled_structural_rules_are_dropped(self):
+        prof = {"structural": {"paired_dashes": {"enabled": False},
+                               "en_dash": {"enabled": False}}}
+        self.assertEqual(self.names(prof), [])
+
+    def test_empty_phrases_and_spellings_add_no_rule(self):
+        self.assertEqual(self.names({"phrases": [], "spellings": {"patterns": []}}), [])
+
+    def test_an_empty_profile_flags_nothing(self):
+        self.assertEqual(voice_gate.detect("anything at all", voice_gate.build_rules({})), [])
+
+    def test_prefix_spellings_spare_american_words(self):
+        for word in ("organism", "organisms", "analyses"):
+            self.assertNotIn("spelling", fire(f"The {word} grew."), word)
+        for word in ("organise", "organisation", "analysed"):
+            self.assertIn("spelling", fire(f"We {word} it."), word)
 
 
 if __name__ == "__main__":

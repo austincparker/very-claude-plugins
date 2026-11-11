@@ -66,7 +66,8 @@ _NOT_NUMERIC_RANGE = r"(?!\d\s*[—–]\s*\d)"
 # Em dash only -- do not widen this to the en dash too. EN_DASH_USE below already
 # covers it, and matching both here would double-report the same span under two
 # findings.
-DASH_USE = re.compile(_NOT_NUMERIC_RANGE + r"\w\s*—\s*\w")
+# The trailing word is a lookahead so `a—b—c` yields two matches, not one.
+DASH_USE = re.compile(_NOT_NUMERIC_RANGE + r"\w\s*—\s*(?=\w)")
 EN_DASH_USE = re.compile(_NOT_NUMERIC_RANGE + r"\w\s*–\s*\w")
 
 
@@ -150,10 +151,12 @@ MCP_GATED = re.compile(
 # Substring, not equality. Exact keys miss `commentBody`, and every MCP server
 # spells its body parameter slightly differently -- an exact list is always one
 # server behind.
-MCP_PROSE_KEYS = (
+PROSE_KEYS = (
     "body", "title", "text", "comment", "summary",
-    "description", "commit_message", "message", "notes", "subject",
+    "description", "commit_message", "message", "notes", "subject", "content",
 )
+MCP_PROSE_KEYS = PROSE_KEYS
+_KEY_ALT = "|".join(PROSE_KEYS)
 
 
 def mcp_prose(tool_input):
@@ -183,20 +186,23 @@ def mcp_prose(tool_input):
 # Pull requests are not gated: a PR's title, body, comments and reviews are the
 # author writing about their own diff, and a commit message is not a message to
 # anyone. What gets gated is prose aimed AT a person: an issue, a release, a gist.
+# Global flags may sit between `gh` and the subcommand (`gh -R o/r issue create`).
+_GH_GLOBALS = r"(?:(?:-R|--repo)[=\s]+\S+\s+|-\S+\s+)*"
 GH_PROSE_SUBCOMMAND = re.compile(
-    r"\bgh\s+(?:issue\s+(?:create|comment|edit)"
+    r"\bgh\s+" + _GH_GLOBALS + r"(?:issue\s+(?:create|comment|edit|close)"
     r"|release\s+(?:create|edit)|gist\s+create)\b"
 )
 GH_PROSE_FLAG = re.compile(
-    r"(?:^|\s)(?:--body(?:-file)?|--title|--notes(?:-file)?|--comment|-[btnF])(?:[=\s]|$)"
+    r"(?:^|\s)(?:--body(?:-file)?|--title|--notes(?:-file)?|--comment|--desc(?:ription)?"
+    r"|-[btnFd])(?:[=\s]|$)"
 )
 _GH_API = re.compile(r"\bgh\s+api\b")
+# The method-override spelling is shared by `gh api` and curl-style writes.
+_METHOD_WRITE = r"(?:-X|--request|--method)[=\s]*(?:POST|PUT|PATCH)"
 _GH_API_WRITE_VERB = re.compile(
-    r"(?:(?:-X|--method)[=\s]+(?:POST|PUT|PATCH)|--field\b|--raw-field\b|\s-[fF]\s)"
+    r"(?:" + _METHOD_WRITE + r"|--field\b|--raw-field\b|\s-[fF](?:\s|\w+=))"
 )
-_GH_API_PROSE_KEY = re.compile(
-    r"""(?:body|title|summary|description|comment|notes|text|message|subject)["']?\s*[=:]"""
-)
+_GH_API_PROSE_KEY = re.compile(r"""(?:""" + _KEY_ALT + r""")["']?\s*[=:]""")
 
 
 # A pull request is named by the endpoint path or by the root fields of a GraphQL
@@ -340,7 +346,7 @@ def gh_api_write(cmd):
 
 
 WRITE_VERB = (
-    r"(?:(?:-X|--request|--method)[=\s]+(?:POST|PUT|PATCH)"
+    r"(?:" + _METHOD_WRITE +
     r"|\"(?:POST|PUT|PATCH)\"|'(?:POST|PUT|PATCH)'"
     r"|--data\b|--data-\w+\b|--json\b|\s-d\s)"
 )
@@ -362,7 +368,9 @@ def outward_write(cmd):
 # happens to contain this literal string, wherever the shell lets it sit, must
 # not self-exempt the call it is the body of.
 NO_PROSE_TOKEN = "[no-prose]"
-_SHELL_QUOTED_SPAN = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
+_SHELL_QUOTED_SPAN = re.compile(
+    r"\$'(?:[^'\\]|\\.)*'|'[^']*'|\"(?:[^\"\\]|\\.)*\""
+)
 
 
 def _strip_prose_payloads(cmd):
@@ -392,14 +400,21 @@ def gh_prose(cmd):
 # JSON prose field -- not the command line around it. Scanning the whole command
 # breaks once quoted spans are exempt: the outer `--body "..."` is itself a quoted
 # span, so the exemption swallows exactly the text the rules exist to read.
+_VALUE = r"""(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|([^\s"']\S*))"""
 FLAG_VALUE = re.compile(
-    r"(?:--body|--title|--notes|--comment|-[btn])[=\s]+"
-    r"""(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+))"""
+    r"(?:--body|--title|--notes|--comment|--desc(?:ription)?|-[btnd])[=\s]+" + _VALUE
 )
-HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?\n(.*?)\n\1", re.S)
+# `gh api -f body="..."` / `--field title=x`: the value follows `key=`.
+GH_API_FIELD = re.compile(
+    r"(?:-[fF]|--(?:raw-)?field)[=\s]*(?:" + _KEY_ALT + r")=" + _VALUE
+)
+# The terminator must be a whole line, or a body line that merely starts with
+# the delimiter word ends the scanned body early.
+HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?\n(.*?)\n\t*\1(?=\n|$)", re.S)
+# Each quote style gets its own value alternative so an apostrophe inside a
+# double-quoted value (or a double quote inside a single-quoted one) does not end it.
 JSON_PROSE_FIELD = re.compile(
-    r"""["'](?:body|title|text|comment|summary|description|notes|message|subject)["']"""
-    r"""\s*:\s*["']((?:[^"'\\]|\\.)*)["']"""
+    r"""["'](?:""" + _KEY_ALT + r""")["']\s*:\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)')"""
 )
 
 
@@ -408,7 +423,9 @@ JSON_PROSE_FIELD = re.compile(
 # the path rather than the prose, so the file is opened here or its prose ships
 # unexamined.
 # The value stops at shell punctuation, so `--body-file -;` still names stdin.
-FLAG_FILE = re.compile(r"(?:--body-file|--notes-file|-F)[=\s]+([^\s;|&)<>]+)")
+FLAG_FILE = re.compile(
+    r"""(?:--body-file|--notes-file|-F)[=\s]+(?:"([^"]+)"|'([^']+)'|([^\s;|&)<>]+))"""
+)
 
 # `-` names stdin, not a path on disk -- opening it as a file always fails. The
 # text it carries is whatever an `echo`/`printf` or a `cat <path>` immediately
@@ -419,9 +436,11 @@ FLAG_FILE = re.compile(r"(?:--body-file|--notes-file|-F)[=\s]+([^\s;|&)<>]+)")
 # file's contents at all). An echo/printf may carry a format argument ahead of
 # the value (`printf "%s" "text"`), so the match skips over any prior quoted or
 # bare argument to reach the one immediately against the pipe.
+# The bare-word alternative cannot start with a quote, so the alternatives are
+# disjoint and a long argument list cannot backtrack exponentially.
 _ECHO_STDIN_SOURCE = re.compile(
     r"(?:echo|printf)\s+(?:-\S+\s+)*"
-    r"(?:(?:\"(?:[^\"\\]|\\.)*\"|'[^']*'|\S+)\s+)*"
+    r"(?:(?:\"(?:[^\"\\]|\\.)*\"|'[^']*'|[^\s\"']\S*)\s+)*"
     r"(?:\"((?:[^\"\\]|\\.)*)\"|'([^']*)')\s*\|"
 )
 _CAT_STDIN_SOURCE = re.compile(r"\bcat\s+(\S+)\s*\|")
@@ -447,38 +466,55 @@ def _stdin_source_prose(prefix):
         return None
 
 
+def _read_prose_file(path):
+    path = os.path.expandvars(os.path.expanduser(path))
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        return fh.read(200_000)
+
+
 def _flag_file_prose(cmd):
-    out = []
+    """(texts, unresolved): the prose in every readable file a flag names, and
+    whether any named file could not be opened here."""
+    out, unresolved = [], False
     for m in FLAG_FILE.finditer(cmd):
-        path = m.group(1).strip("\"'")
+        path = (m.group(1) or m.group(2) or m.group(3)).strip("\"'")
         if path == "-":
             text = _stdin_source_prose(cmd[:m.start()])
             if text and text.strip():
                 out.append(text)
             continue
+        # `-F key=@file` is a `gh api` field; `-F key=value` carries its value inline.
+        field = re.match(r"\w+=(@?)(.*)$", path, re.S)
+        if field:
+            if not field.group(1):
+                continue
+            path = field.group(2)
         try:
-            with open(path, encoding="utf-8", errors="replace") as fh:
-                text = fh.read(200_000)
+            text = _read_prose_file(path)
         except OSError:
-            # Unreadable here is not the same as absent: the call still publishes,
-            # so hand the path forward and let the fallback judge what it can.
+            unresolved = True
             continue
         if text.strip():
             out.append(text)
-    return out
+    return out, unresolved
 
 
 def bash_prose(cmd):
-    out = _flag_file_prose(cmd)
-    for m in FLAG_VALUE.finditer(cmd):
-        v = m.group(1) or m.group(2) or m.group(3) or ""
-        if v.strip():
-            out.append(v)
+    out, unresolved = _flag_file_prose(cmd)
+    for rx in (FLAG_VALUE, GH_API_FIELD):
+        for m in rx.finditer(cmd):
+            v = m.group(1) or m.group(2) or m.group(3) or ""
+            if v.strip():
+                out.append(v)
     out += [m.group(2) for m in HEREDOC.finditer(cmd) if m.group(2).strip()]
-    out += [m.group(1) for m in JSON_PROSE_FIELD.finditer(cmd) if m.group(1).strip()]
-    # Nothing extractable but the call IS gated: fall back to the whole command
-    # rather than silently passing prose the shapes above did not anticipate.
-    return out or [cmd]
+    out += [(m.group(1) or m.group(2)) for m in JSON_PROSE_FIELD.finditer(cmd)
+            if (m.group(1) or m.group(2) or "").strip()]
+    # Nothing extractable, or a named file this hook cannot open (a relative path
+    # after `cd`, a file the same command writes): judge the whole command rather
+    # than let prose the shapes above did not anticipate go unexamined.
+    if unresolved or not out:
+        out.append(cmd)
+    return out
 
 
 def _segment_gated(seg):
@@ -511,7 +547,8 @@ def _is_gated(cmd):
 
 def prose_blobs(tool, tool_input):
     """Every human-facing prose string this call would publish. [] = not gated."""
-    tool_input = tool_input or {}
+    if not isinstance(tool_input, dict):
+        tool_input = {}
 
     if MCP_GATED.match(tool):
         return mcp_prose(tool_input)
@@ -520,10 +557,16 @@ def prose_blobs(tool, tool_input):
         types = _LOCAL["prose_frontmatter_types"]
         if not types:
             return []
-        body = " ".join(
+        parts = [
             str(tool_input.get(k, "") or "")
             for k in ("content", "new_string", "new_source")
-        )
+        ]
+        parts += [
+            str(e.get("new_string", "") or "")
+            for e in tool_input.get("edits") or []
+            if isinstance(e, dict)
+        ]
+        body = "\n".join(parts)
         marker = re.compile(r"^\s*type:\s*(?:" + "|".join(types) + r")\s*$", re.M)
         return [body] if marker.search(body) and body.strip() else []
 
@@ -541,23 +584,24 @@ def main():
         payload = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
         sys.exit(0)
-
-    tool_name = payload.get("tool_name", "") or ""
-    blobs = prose_blobs(tool_name, payload.get("tool_input"))
-    if not blobs:
+    if not isinstance(payload, dict):
         sys.exit(0)
 
+    # Any failure past this point blocks (exit 2): an uncaught exception exits 1,
+    # which does not block, so the call would publish ungated.
     try:
-        profile = load_profile()
-    except (OSError, json.JSONDecodeError) as exc:
-        # A gate that cannot read its rules must say so, not wave prose through.
-        print(f"voice_gate: profile unreadable ({exc})", file=sys.stderr)
+        tool_name = payload.get("tool_name", "") or ""
+        blobs = prose_blobs(tool_name, payload.get("tool_input"))
+        if not blobs:
+            sys.exit(0)
+        rules = build_rules(load_profile())
+        findings = []
+        for blob in blobs:
+            findings.extend(detect(blob, rules))
+    except Exception as exc:  # noqa: BLE001 - fail closed on any error
+        print(f"voice_gate: could not judge this call ({exc.__class__.__name__}: {exc})",
+              file=sys.stderr)
         sys.exit(2)
-
-    rules = build_rules(profile)
-    findings = []
-    for blob in blobs:
-        findings.extend(detect(blob, rules))
     if not findings:
         sys.exit(0)
 

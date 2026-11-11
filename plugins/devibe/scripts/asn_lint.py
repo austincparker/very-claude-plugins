@@ -23,8 +23,7 @@ fact, two framings:
 The first two constrain code that exists and stop a future mistake. The
 third narrates a past one. `classify_narration()` is the line that separates
 them -- see the module docstring on that function for the exact rule, and
-`test_asn_lint.py` for the confusion matrix that proves it holds over 20
-hand-written cases it was not tuned against one at a time.
+`test_asn_lint.py` for the confusion matrix and the held-out cases.
 
 Six checks, each its own function below:
 
@@ -125,7 +124,23 @@ _BACKWARD_PATTERNS = [
     r"\bkept (below|here) for reference\b",
     r"\bcommenting this out\b",
     r"\bleft here in case\b", r"\bin case .* comes back\b",
+    r"\bformerly\b", r"\bretired\b", r"\bdeprecated\b", r"\brenamed\b",
+    r"\bno longer\b", r"\bobsolete\b", r"\bsuperseded\b",
 ]
+
+# Phrasings that contain a backward word but describe live behavior or bind a
+# future edit, so they must not count as narration: a negated or modal clause
+# ("must never be deleted"), the passive infinitive "is used to <verb>", and a
+# leading participle used as an adjective ("removed items are skipped").
+_NEUTRAL_PATTERNS = [
+    r"\b(?:must|should|shall|never|cannot|can't|do not|don't|does not|may not|"
+    r"will not|won't)\b[^.;]{0,40}?\b(?:removed|deleted|dropped|renamed|replaced|"
+    r"retired|deprecated)\b",
+    r"\b(?:is|are|be|being|been|gets?|got)\s+used to\b",
+    r"^\s*(?:removed|deleted|dropped)\s+\w+s\s+(?:are|is|will|get|must|can)\b",
+    r"\b(?:the|a|an|any|all|each|every|no)\s+(?:removed|deleted|dropped)\s+\w+",
+]
+_NEUTRAL_RE = re.compile("|".join(_NEUTRAL_PATTERNS), re.I)
 
 # Forward markers: the comment is a directive or constraint about code that
 # is still here, aimed at someone editing it next. On its own (no backward
@@ -151,7 +166,7 @@ def classify_narration(text: str) -> str | None:
     this function's job is to say the comment needs a look, not to rewrite
     it.
     """
-    if _BACKWARD_RE.search(text):
+    if _BACKWARD_RE.search(_NEUTRAL_RE.sub(" ", text)):
         return "DELETE"
     if _FORWARD_RE.search(text):
         return "KEEP"
@@ -176,8 +191,6 @@ class CommentBlock:
 
 _HASH_RE = re.compile(r"^\s*#(?!!)(.*)$")
 _SLASH_RE = re.compile(r"^\s*//(.*)$")
-_BLOCK_OPEN_RE = re.compile(r"/\*(.*?)(\*/)?\s*$")
-_HTML_OPEN_RE = re.compile(r"<!--(.*?)(-->)?\s*$")
 
 
 def extract_comment_blocks(lines: list[str]) -> list[CommentBlock]:
@@ -200,14 +213,14 @@ def extract_comment_blocks(lines: list[str]) -> list[CommentBlock]:
     for i, raw in enumerate(lines, start=1):
         stripped = None
         if in_block_comment:
-            m = re.match(r"^(.*?)\*/\s*$", raw)
+            m = re.match(r"^(.*?)\*/", raw)
             if m:
                 stripped = m.group(1).strip(" *")
                 in_block_comment = False
             else:
                 stripped = raw.strip(" *")
         elif in_html_comment:
-            m = re.match(r"^(.*?)-->\s*$", raw)
+            m = re.match(r"^(.*?)-->", raw)
             if m:
                 stripped = m.group(1).strip()
                 in_html_comment = False
@@ -225,7 +238,7 @@ def extract_comment_blocks(lines: list[str]) -> list[CommentBlock]:
                     m = re.match(r"^\s*/\*(.*)$", raw)
                     if m:
                         rest = m.group(1)
-                        m2 = re.match(r"^(.*?)\*/\s*$", rest)
+                        m2 = re.match(r"^(.*?)\*/", rest)
                         if m2:
                             stripped = m2.group(1).strip(" *")
                         else:
@@ -235,7 +248,7 @@ def extract_comment_blocks(lines: list[str]) -> list[CommentBlock]:
                         m = re.match(r"^\s*<!--(.*)$", raw)
                         if m:
                             rest = m.group(1)
-                            m2 = re.match(r"^(.*?)-->\s*$", rest)
+                            m2 = re.match(r"^(.*?)-->", rest)
                             if m2:
                                 stripped = m2.group(1).strip()
                             else:
@@ -442,12 +455,14 @@ def find_shadow_pairs(all_defs: list[tuple[str, int, str]]) -> list[tuple]:
 def find_dead_scaffolding(
     all_defs: list[tuple[str, int, str]], corpus: str
 ) -> list[tuple[str, int, str]]:
-    """Flags a definition whose name never appears followed by `(` anywhere
-    else in the scanned corpus -- i.e. nothing in the set of files handed to
-    this tool calls it. Scoped to what was scanned: a helper genuinely used
-    only by a file outside the scan will false-positive here, which is why
-    the finding is reported as a candidate, not applied."""
-    call_re_cache = {}
+    """Flags a definition whose name appears nowhere else in the scanned code
+    corpus -- not as a call, a callback, a decorator or an export. Scoped to
+    what was scanned: a helper genuinely used only by a file outside the scan
+    will false-positive here, which is why the finding is reported as a
+    candidate, not applied."""
+    defs_per_name: dict[str, int] = {}
+    for _, _, name in all_defs:
+        defs_per_name[name] = defs_per_name.get(name, 0) + 1
     out = []
     for f, ln, name in all_defs:
         if name in _ENTRY_POINT_NAMES:
@@ -456,14 +471,9 @@ def find_dead_scaffolding(
             continue
         if name.startswith("test_") or name.startswith("_test"):
             continue
-        rx = call_re_cache.get(name)
-        if rx is None:
-            rx = re.compile(r"(?<!def )(?<!function )\b" + re.escape(name) + r"\s*\(")
-            call_re_cache[name] = rx
-        # The definition line itself is excluded by the lookbehinds above, so
-        # any real call site anywhere in the corpus produces hits >= 1.
-        hits = len(rx.findall(corpus))
-        if hits == 0:
+        # Every definition of the name accounts for one occurrence.
+        occurrences = len(re.findall(r"\b" + re.escape(name) + r"\b", corpus))
+        if occurrences <= defs_per_name[name]:
             out.append((f, ln, name))
     return out
 
@@ -480,7 +490,22 @@ _FUNCCALL_RE = re.compile(r"^([A-Za-z_]\w*)\(\)$")
 # A token carrying any of these is a pattern, a placeholder or an assignment --
 # never a claim that a file sits at that path. Testing them for existence is how
 # a checker accumulates findings nobody can act on, which is how it stops being run.
-_NOT_A_PATH_CLAIM = ("*", "<", ">", "=", "${")
+_NOT_A_PATH_CLAIM = ("*", "<", ">", "=", "${", "://")
+
+# A version, and an absolute path into the system (not into the repo), are not
+# claims about the tree.
+_VERSION_RE = re.compile(r"^v?\d+(?:\.\d+)+(?:[-+]\w+)*$")
+_SYSTEM_ROOTS = frozenset({
+    "usr", "bin", "sbin", "etc", "var", "tmp", "opt", "dev", "proc", "lib",
+    "home", "Users", "System", "Library", "Applications", "private", "mnt",
+})
+
+# A dotted token with no slash is a file claim only when its suffix is a file
+# extension; `example.com`, `process.env` and `np.dot` are not.
+_FILE_EXTS = frozenset(TEXT_EXTS | {
+    ".json", ".toml", ".cfg", ".ini", ".txt", ".lock", ".css", ".scss", ".svg",
+    ".png", ".jpg", ".csv", ".xml", ".sql", ".mjs", ".cjs", ".plist", ".gitignore",
+})
 
 # The tree walk does not descend into these, so a claim naming a path inside one
 # is checked against the disk directly instead of the walked set.
@@ -488,7 +513,7 @@ _TREE_SKIP_DIRS = frozenset({".git", ".claude", "node_modules", "__pycache__", "
 
 
 def find_doc_claim_contradictions(
-    md_path: Path, text: str, root: Path, known_def_names: set,
+    md_path: Path, text: str, root: Path, code_corpus: str = "",
     scanned: frozenset[str] = frozenset(),
 ) -> list[tuple[int, str]]:
     out = []
@@ -501,7 +526,12 @@ def find_doc_claim_contradictions(
                 continue
             if not tok.strip("/."):          # `/`, `.`, `./` -- a character, not a claim
                 continue
-            if "/" in tok or re.search(r"\.[A-Za-z0-9]{1,5}$", tok):
+            if _VERSION_RE.match(tok):
+                continue
+            if tok.startswith("/") and tok.split("/")[1] in _SYSTEM_ROOTS:
+                continue
+            suffix = Path(tok).suffix
+            if "/" in tok or (suffix and suffix.lower() in _FILE_EXTS):
                 def _rel(pth: Path) -> str | None:
                     try:
                         return pth.resolve().relative_to(root.resolve()).as_posix()
@@ -554,9 +584,13 @@ def find_doc_claim_contradictions(
             m = _FUNCCALL_RE.match(tok)
             if m:
                 name = m.group(1)
-                if len(name) > 2 and name not in known_def_names:
+                # Only code this run scanned can back a call claim; with no code in
+                # the scan (or code in a language it does not parse) there is
+                # nothing to contradict it.
+                if (len(name) > 2 and code_corpus
+                        and not re.search(r"\b" + re.escape(name) + r"\b", code_corpus)):
                     out.append((i, f"doc references `{tok}` -- no matching "
-                                    f"definition found in the scanned tree"))
+                                    f"definition found in the scanned code"))
     return out
 
 
@@ -575,7 +609,8 @@ def iter_files(paths: list[str]):
                                 and not d.startswith(".")]
                 for fn in filenames:
                     fp = Path(dirpath) / fn
-                    if fp.suffix in TEXT_EXTS:
+                    # A symlinked file may resolve outside the scanned tree.
+                    if fp.suffix in TEXT_EXTS and not fp.is_symlink():
                         yield fp
 
 
@@ -601,13 +636,12 @@ def lint(paths: list[str], root: str | None = None, only: set | None = None) -> 
         per_file_text[f] = text
         lines = text.splitlines()
         per_file_lines[f] = lines
-        corpus_parts.append(text)
         if f.suffix != ".md":
+            corpus_parts.append(text)
             for ln, name in find_func_defs(lines):
                 all_defs.append((str(f), ln, name))
 
     corpus = "\n".join(corpus_parts)
-    known_def_names = {name for _, _, name in all_defs}
     # Every file under the root, not only the ones this linter parses: a doc
     # legitimately names a .json profile or a .yml workflow, and neither is
     # scanned, so a scanned-only set reports them as absent.
@@ -672,7 +706,7 @@ def lint(paths: list[str], root: str | None = None, only: set | None = None) -> 
         if f.suffix == ".md" and DOC_CLAIM_CONTRADICTED in only:
             text = per_file_text[f]
             for ln, msg in find_doc_claim_contradictions(
-                    f, text, root_path, known_def_names, scanned_paths):
+                    f, text, root_path, corpus, scanned_paths):
                 findings.append(Finding(rel, ln, DOC_CLAIM_CONTRADICTED, msg))
 
     if RENAMED_SHADOW_FUNCTION in only:
@@ -726,6 +760,14 @@ def main(argv=None) -> int:
                   file=sys.stderr)
             print(f"valid categories: {', '.join(ALL_CATEGORIES)}", file=sys.stderr)
             return 2
+
+    missing = [p for p in args.paths if not os.path.exists(p)]
+    if missing:
+        print(f"asn-lint: no such path: {', '.join(missing)}", file=sys.stderr)
+        return 2
+    if not any(True for _ in iter_files(args.paths)):
+        print("asn-lint: no lintable files under the given paths", file=sys.stderr)
+        return 2
 
     findings = lint(args.paths, root=args.root, only=only)
 

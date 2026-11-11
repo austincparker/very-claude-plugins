@@ -23,27 +23,43 @@ import re
 import sys
 
 # Prose only. Code blocks and inline code carry their own conventions, and a
-# variable name is not a grammar error.
-FENCE = re.compile(r"```.*?```", re.S)
-INLINE = re.compile(r"`[^`]*`")
+# variable name is not a grammar error. What counts as code is decided by the
+# sibling code_spans.py, so both scripts agree on fences and spans.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import code_spans  # noqa: E402
+
 URL = re.compile(r"https?://[^\s\"'<>]+")
+# A quoted span is someone else's words and keeps its own punctuation and spelling.
+QUOTE = re.compile(r'"[^"\n]{1,200}"')
+
+# Masked text is filled with a character that is neither a word character nor
+# whitespace: filler letters made two adjacent same-length spans read as a
+# doubled word, and filler spaces read as space-before-punctuation.
+FILL = "#"
+
+
+def _mask(chunk: str) -> str:
+    return "".join(c if c in "\r\n" else FILL for c in chunk)
 
 
 def prose_only(text: str) -> str:
-    """Blank out code and URLs, PRESERVING line count.
+    """Blank out code, URLs and quoted spans, PRESERVING every newline.
 
-    ⚠ Replacing a fenced block with a single newline collapses it, and every
-    reported line number after the first code block is then wrong. Measured
-    2026-09-02: a hit reported at L161 was really inside a stripped fence. A
-    linter whose line numbers are wrong is worse than no linter, because the
-    reader goes to the line, sees nothing, and stops trusting the tool.
+    A reported line number that points at the wrong line is worse than none,
+    because the reader goes to the line, sees nothing, and stops trusting the
+    tool. Fences and inline spans are located by code_spans.py; masking keeps
+    the newlines they hold.
     """
-    text = FENCE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
-    # ⚠ Filler, NOT spaces. Blanking `X`. to spaces produces "     ." — the
-    # exact space-before-punctuation pattern this file flags, so the stripper
-    # would manufacture its own findings. Same length keeps offsets honest.
-    text = INLINE.sub(lambda m: "x" * len(m.group(0)), text)
-    return URL.sub(lambda m: "x" * len(m.group(0)), text)
+    out = []
+    for is_fence, chunk in code_spans.split_fences(text):
+        if is_fence:
+            out.append(_mask(chunk))
+            continue
+        for is_code, piece in code_spans.split_inline(chunk):
+            out.append(_mask(piece) if is_code else piece)
+    text = "".join(out)
+    text = URL.sub(lambda m: _mask(m.group(0)), text)
+    return QUOTE.sub(lambda m: _mask(m.group(0)), text)
 
 
 # British spellings the house style rejects. Kept short and high-confidence —

@@ -3,7 +3,7 @@ name: asn-lint
 posture: labor
 color: yellow
 allowed-tools: Read, Bash
-description: "Use before a diff or a code file goes out the door -- \"check for tombstone comments\", \"lint this for narrated deletions\", \"asn lint\", \"does this comment explain a deletion instead of just deleting\", \"check for dead-code scaffolding\", \"review this PR for backward-looking comments\", \"devibe this file\" (code files and doc-claim checks against the tree, not prose diagnosis -- see `devibe:voice` for \"devibe this prose\"). One lint for backward-looking tombstone narration in code and documentation: tombstone comments and commented-out code in any language, plus four structural checks (docstring restating its signature, renamed-shadow function, uncalled scaffolding, README claim the tree does not back) that currently parse Python, JavaScript and TypeScript only. Wraps scripts/asn_lint.py. Reports only; never edits."
+description: "Use before a diff or a code file goes out the door: \"check for tombstone comments\", \"lint this for narrated deletions\", \"asn lint\", \"does this comment explain a deletion instead of just deleting\", \"check for dead-code scaffolding\", \"review this PR for backward-looking comments\", \"devibe this file\". Covers code files and README claims checked against the tree; for prose diagnosis (\"devibe this prose\") see `devibe:voice`."
 ---
 
 # asn-lint
@@ -32,7 +32,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/asn_lint.py PATH --json
 
 Exit 0: clean. Exit 1: findings reported (report them; do not act on exit
 code alone -- see "Report, never apply" below). Exit 2: usage error, e.g. an
-unknown `--only` slug.
+unknown `--only` slug, a path that does not exist, or no lintable files.
 
 ## The carve-out is the whole point
 
@@ -53,21 +53,18 @@ The third narrates an edit that already happened. `classify_narration()` in
 matching only a **forward** marker (must / never / always / do not /
 required / keep this / ...) is `KEEP`. Read `_BACKWARD_PATTERNS` for the
 actual list rather than trusting a paraphrase -- several markers are
-narrower than their English names suggest (`no longer` fires only before a
-verb like *does* or *needs*, and `formerly` is not a marker at all). Backward beats forward when both are present, because the
+narrower than their English names suggest (a negated or modal clause such as "must never be deleted" is neutralized,
+and `used to` after *is* or *are* is not narration). Backward beats forward when both are present, because the
 backward-looking clause is exactly the part that can't ship as written --
 the fix is usually to keep only the forward half, not to keep the whole
 sentence.
 
-`scripts/test_asn_lint.py` scores 10 DELETE-cases and 10 KEEP-cases through
-the real classifier. **It is a regression guard, not evidence the carve-out
-generalises** -- each case contains a literal marker from the pattern list,
-so the matrix largely restates that list and cannot fail except by deleting
-a pattern. An out-of-sample probe of 16 unseen sentences scored 5/16: six
-genuinely narrated deletions returned no verdict because they used wording
-the patterns do not carry, and two forward-looking constraints were flagged
-`DELETE` because a backward marker appeared incidentally ("used to" inside
-"used to build the query string").
+`scripts/test_asn_lint.py` scores DELETE-cases and KEEP-cases through the
+real classifier, including cases with no literal marker from the pattern list.
+**It is a regression guard, not evidence the carve-out generalises**: the
+classifier is keyword-based, so a narrated deletion phrased without a marker
+returns no verdict, and a forward constraint can still be flagged when a
+backward word appears in an unusual sense.
 
 So: a `DELETE` verdict is a prompt to read the line, never an instruction,
 and silence is not a clean bill of health. Widening recall means widening

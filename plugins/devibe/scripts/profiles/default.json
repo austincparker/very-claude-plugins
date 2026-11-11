@@ -32,8 +32,8 @@
     "guidance": "a British spelling. Use American English.",
     "patterns": [
       "behaviour",
-      "organis",
-      "analyse",
+      "organis(?:e|ation|ing|er)",
+      "analyse(?!s\\b)",
       "catalogue",
       "defence",
       "favourite",
