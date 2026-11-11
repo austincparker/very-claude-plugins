@@ -63,6 +63,20 @@ Each of these has a command that checks the value and saves it:
 | `/nudge quiet 12:00-13:00` | `quiet_hours` (no argument clears it) |
 | `/nudge status model,cost,branch` | `status_segments` (no argument lists the current ones and every name) |
 
+## Hosted controls
+
+These change what the hosted server sends you. Signed out, each answers with a one-line sign-in hint (`/mcp`).
+
+| Command | Does |
+| --- | --- |
+| `/nudge prefs` | shows your hosted preferences |
+| `/nudge mute owner/repo` | stops nudges from a repository |
+| `/nudge unmute owner/repo` | turns them back on |
+| `/nudge failures-only on` | CI nudges only for failures (`off` undoes it) |
+| `/nudge kinds ci,pr_landed` | which kinds you get: `ci`, `review_requested`, `review_submitted`, `pr_landed` |
+
+`/nudge quiet`, `/nudge pause` and `/nudge resume` also update the server, with your local time zone, when you are signed in. A pause with no end is sent as a far-future time.
+
 ## Status line
 
 `status_segments` is a comma list. Segments show in the order you give, separated by `·`. A segment with nothing to show drops out, and a name that is not on the list is skipped.
@@ -79,9 +93,9 @@ Each of these has a command that checks the value and saves it:
 | `cost` | `$1.23`, what the session has cost | the session's usage |
 | `model` | the model in use | the session |
 | `branch` | the git branch, blank outside a repository | `git branch --show-current`, looked up once a minute |
-| `hosted` | hosted nudge status | the hosted server; blank until you sign in |
-| `ci` | CI status | the hosted server; blank until you sign in |
-| `reviews` | pending reviews | the hosted server; blank until you sign in |
+| `hosted` | `hosted 2 pending`, `hosted paused`, `hosted quiet` or `hosted ok` | the hosted server, read every 5 minutes; blank until you sign in |
+| `ci` | the newest CI nudge | the hosted server; blank until you sign in |
+| `reviews` | the newest review nudge | the hosted server; blank until you sign in |
 
 `break` and `sit` only show inside your work hours and work days. Nudges that just fired show first, ahead of the segments.
 
