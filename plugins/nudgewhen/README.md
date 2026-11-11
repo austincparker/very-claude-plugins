@@ -1,4 +1,4 @@
-# nudge-me
+# nudgewhen
 
 Nudges inside Claude Code: take a break, go to bed, and any reminder you set.
 
@@ -9,7 +9,7 @@ Nudges inside Claude Code: take a break, go to bed, and any reminder you set.
 ## Install
 
 ```
-/plugin install nudge-me --marketplace austincparker/very-claude-plugins
+/plugin install nudgewhen --marketplace austincparker/very-claude-plugins
 ```
 
 ## Use
