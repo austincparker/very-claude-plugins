@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { MINUTE } from '../hooks/schedule'
-import { DEFAULT_SEGMENTS, FREE, PAID, bedText, contextText, costText, limitsText, parseSegments, paidText } from '../hooks/status'
+import { DEFAULT_SEGMENTS, FREE, PAID, bedText, contextText, costText, limitsText, parseSegments, paidText, setHosted } from '../hooks/status'
 
 function localAt(hour: number, minute = 0): number {
   return new Date(2026, 10, 10, hour, minute, 0, 0).getTime()
@@ -93,7 +93,8 @@ test('parseSegments keeps order, drops unknown names and repeats', () => {
 })
 
 test('the paid segments render nothing until the hosted server is connected', () => {
-  for (const name of PAID) expect(paidText(name)).toBe('')
+  setHosted(undefined)
+  for (const name of PAID) expect(paidText(name, 0)).toBe('')
 })
 
 test('formatters: context percent, the limit closest to its cap, cost in dollars', () => {

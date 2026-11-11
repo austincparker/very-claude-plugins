@@ -53,6 +53,7 @@ import {
   sitText,
   unknownSegments,
 } from './status'
+import type { Free, Paid } from './status'
 import { SAMPLE_MS, isSampler, localStamp, num, readLog, readSit, report, satMinutes, step } from './sitting'
 
 type Config = { sitMin: number; awayMin: number; bedtime: boolean; controls: Controls; segments: string }
@@ -91,7 +92,9 @@ const fresh = () => ({
   isBusy: false,
   cloudRun: undefined as object | undefined,
   statusAt: 0,
-  statusRun: false,
+  statusRun: undefined as object | undefined,
+  refresh: Promise.resolve() as Promise<unknown>,
+  options: {} as PluginOptions,
   isPrompting: false,
   stop: undefined as (() => void) | undefined,
   queue: Promise.resolve() as Promise<unknown>,
@@ -361,26 +364,29 @@ async function pollCloud($: EngineInterface) {
 
 /** Reads `hosted_status` every `STATUS_MS` while the hosted server is connected, and clears the paid segments when it is not. */
 async function fetchHostedStatus($: EngineInterface) {
-  if (state.statusRun) return
-  const now = await $.clock.now()
-  if (now - state.statusAt < STATUS_MS) return
+  if (state.statusRun !== undefined) return
   const server = await $.store.get('cloudServer')
   if ((await $.store.get('cloudUp')) !== true || typeof server !== 'string') {
+    state.statusAt = 0
     setHosted(undefined)
     return
   }
+  const now = await $.clock.now()
+  if (now - state.statusAt < STATUS_MS) return
   state.statusAt = now
-  state.statusRun = true
   const stop = state.stop
+  const run = {}
+  state.statusRun = run
+  const isLive = () => state.statusRun === run && state.stop === stop
   try {
     const status = parseHostedStatus(await timed($, $.mcp.call(server, 'hosted_status', {})))
-    if (state.stop !== stop) return
+    if (!isLive()) return
     setHosted(status ?? undefined)
     await refreshStatus($)
   } catch {
-    setHosted(undefined)
+    if (isLive()) setHosted(undefined)
   } finally {
-    state.statusRun = false
+    if (state.statusRun === run) state.statusRun = undefined
   }
 }
 
@@ -405,7 +411,7 @@ async function segment(
   seg: { sat: number | null; usage: SessionUsage | null | undefined },
 ): Promise<string> {
   const { cfg } = state
-  if (isPaid(name)) return paidText(name)
+  if (isPaid(name)) return paidText(name, now)
   switch (name) {
     case 'sit':
       return sitText(seg.sat, cfg.sitMin)
@@ -430,12 +436,27 @@ async function segment(
   }
 }
 
-async function refreshStatus($: EngineInterface) {
+/** Redraws the status line; runs one at a time so an older, slower read never lands after a newer one. */
+function refreshStatus($: EngineInterface): Promise<void> {
+  const next = state.refresh.then(() => redraw($))
+  state.refresh = next.catch(() => undefined)
+  return next
+}
+
+/** The fired nudges still on show at `now`, with the older ones dropped from the store. */
+function shownFired($: EngineInterface, now: number): Promise<Fired[]> {
+  return locked(async () => {
+    const all = readFired(await $.store.get('fired'))
+    const shown = all.filter(f => now - f.at < SHOW_FIRED_MS)
+    if (shown.length !== all.length) await $.store.set('fired', shown)
+    return shown
+  })
+}
+
+async function redraw($: EngineInterface) {
   const { cfg } = state
   const now = await $.clock.now()
-  const all = readFired(await $.store.get('fired'))
-  const shown = all.filter(f => now - f.at < SHOW_FIRED_MS)
-  if (shown.length !== all.length) await locked(() => $.store.set('fired', shown))
+  const shown = await shownFired($, now)
   const parts = shown.map(f => `nudge: ${f.text}`)
   const sat = satMinutes(readSit(await $.store.get('sit')), now)
   const isWork = isWorkTime(cfg.controls, now)
@@ -520,7 +541,10 @@ async function forget($: EngineInterface): Promise<string> {
 async function setting($: EngineInterface, key: string, value: string): Promise<string | null> {
   try {
     const r = await $.config.set({ key: `nudgewhen.${key}`, value })
-    return r.deny === undefined ? null : `Could not change ${key}: ${r.deny}`
+    if (r.deny !== undefined) return `Could not change ${key}: ${r.deny}`
+    state.options = { ...state.options, [key]: value }
+    state.cfg = config(state.options).cfg
+    return null
   } catch (err) {
     return `Could not change ${key}: ${err instanceof Error ? err.message : String(err)}. Set it in /config instead.`
   }
@@ -633,7 +657,7 @@ async function control($: EngineInterface, verb: string, arg: string, now: numbe
       if (ms === null) return 'Try "/nudge snooze 30m" (2h and 1h30m work too).'
       const h = { until: now + ms }
       await hold($, h)
-      return `Snoozed until ${until(h)}.`
+      return `Snoozed until ${until(h)}.${await syncHosted($, { paused_until: h.until })}`
     }
     case 'pause': {
       const h = parsePause(arg, now, controls.wakeMin)
@@ -644,7 +668,8 @@ async function control($: EngineInterface, verb: string, arg: string, now: numbe
     case 'resume': {
       const was = isHeld(readHold(await $.store.get('hold')), now)
       await locked(() => $.store.delete('hold'))
-      return `${was ? 'Resumed. Nudges are on.' : 'Nothing was paused.'}${await syncHosted($, { paused_until: null })}`
+      const quiet = was && isQuiet(controls, now) ? ' Quiet hours still hold toasts until they end.' : ''
+      return `${was ? 'Resumed. Nudges are on.' : 'Nothing was paused.'}${quiet}${await syncHosted($, { paused_until: null })}`
     }
     case 'bedtime':
     case 'wake': {
@@ -742,14 +767,15 @@ export const register: Register = (on, options) => {
   Object.assign(state, fresh(), { queue })
   const read = config(options)
   state.cfg = read.cfg
+  state.options = { ...options }
   state.warnings = read.warnings
 
   on('session.start', async ($, e, next) => {
     state.sessionId = await $.session.id()
     await $.command.register({
       name: 'nudge',
-      description: 'Set, list or cancel nudges; /nudge report shows your sitting log',
-      argumentHint: 'in 20m <text> | at 17:30 <text> | every 45m <text> | list | cancel <id> | report',
+      description: 'Set, list or cancel nudges; snooze or pause them; set bedtime, work hours and quiet hours; choose status line segments; manage hosted nudges; /nudge report shows your sitting log',
+      argumentHint: 'in 20m <text> | at 17:30 <text> | every 45m <text> | list | cancel <id> | snooze 30m | pause | resume | bedtime|wake HH:MM | hours|quiet HH:MM-HH:MM | days mon,tue | status <list> | prefs | mute|unmute owner/repo | failures-only on|off | kinds <list> | report',
       immediate: true,
     })
     await $.tool.register({
@@ -778,6 +804,7 @@ export const register: Register = (on, options) => {
     state.stop?.()
     state.stop = undefined
     state.cloudRun = undefined
+    state.statusRun = undefined
     setHosted(undefined)
     return next(e)
   })

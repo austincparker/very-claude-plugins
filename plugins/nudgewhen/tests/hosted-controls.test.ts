@@ -2,9 +2,9 @@ import type { McpConnectResult, McpToolResult, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { parseHostedStatus, parsePrefs } from '../hooks/hosted'
+import { hostedText, parseHostedStatus, parsePrefs, prefsLines } from '../hooks/hosted'
 import { MINUTE } from '../hooks/schedule'
-import { paidText } from '../hooks/status'
+import { paidText, setHosted } from '../hooks/status'
 
 const SERVER = 'plugin:nudgewhen:nudgewhen'
 const NOW = new Date(2026, 10, 10, 12, 0, 0, 0).getTime()
@@ -49,7 +49,7 @@ const STATUS = {
 }
 
 /** The engine beneath the mod, with the hosted server holding `prefs` and answering `status`. */
-function world(on: On, opts: { connect?: McpConnectResult; prefs?: Prefs; status?: unknown; setError?: boolean } = {}) {
+function world(on: On, opts: { connect?: McpConnectResult; prefs?: Prefs; status?: unknown; setError?: boolean; getError?: boolean } = {}) {
   const clock = mock.clock(on, { now: NOW })
   mock.store(on, {})
   const calls = { status: 0, get: 0, set: [] as Record<string, unknown>[], config: [] as { key: string; value: unknown }[] }
@@ -83,6 +83,7 @@ function world(on: On, opts: { connect?: McpConnectResult; prefs?: Prefs; status
     }
     if (e.tool === 'get_prefs') {
       calls.get += 1
+      if (opts.getError) return { value: text('down', true) }
       return { value: text(server.prefs) }
     }
     if (e.tool === 'set_prefs') {
@@ -181,9 +182,46 @@ test('a server-sent status is cleaned before it reaches the terminal', { options
 })
 
 test('paidText is blank until a status has arrived', () => {
-  expect(paidText('hosted')).toBe('')
-  expect(paidText('ci')).toBe('')
-  expect(paidText('reviews')).toBe('')
+  setHosted(undefined)
+  expect(paidText('hosted', NOW)).toBe('')
+  expect(paidText('ci', NOW)).toBe('')
+  expect(paidText('reviews', NOW)).toBe('')
+})
+
+test('a status that leaves out last_ci or last_review still reads', () => {
+  const { last_ci: _ci, last_review: _review, ...rest } = STATUS
+  expect(parseHostedStatus(text(rest))).toEqual({ ...rest, last_ci: null, last_review: null })
+})
+
+test('hostedText: an expired pause is not shown, and paused beats quiet beats pending', () => {
+  const s = parseHostedStatus(text(STATUS))!
+  expect(hostedText(undefined, NOW)).toBe('')
+  expect(hostedText(s, NOW)).toBe('hosted 2 pending')
+  expect(hostedText({ ...s, pending: 0 }, NOW)).toBe('hosted ok')
+  expect(hostedText({ ...s, quiet_now: true }, NOW)).toBe('hosted quiet')
+  expect(hostedText({ ...s, quiet_now: true, paused_until: NOW + 1 }, NOW)).toBe('hosted paused')
+  expect(hostedText({ ...s, paused_until: NOW }, NOW)).toBe('hosted 2 pending')
+  expect(hostedText({ ...s, paused_until: NOW - 1, pending: 0 }, NOW)).toBe('hosted ok')
+})
+
+test('prefs from the server are cleaned and kept within the limits', () => {
+  const evil = { ...PREFS, muted_repos: ['a/b\x1b[31m\nforged'], tz: 'x\u202ey' }
+  const lines = prefsLines(parsePrefs(text(evil))!, NOW)
+  expect(lines).toContain('  muted repos: a/b [31m forged')
+  expect(lines.join('\n')).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u202e]/)
+  const many = Array.from({ length: 150 }, (_, i) => `a/r${i}`)
+  expect(parsePrefs(text({ ...PREFS, muted_repos: many }))!.muted_repos.length).toBe(100)
+})
+
+test('a failing hosted_status clears the paid segments', { options: { status_segments: 'hosted,ci' } }, async ($, on) => {
+  const { clock, shown, server } = world(on)
+  await start($)
+  await clock.settle()
+  await clock.advance(30_000)
+  expect(shown.status).toBe('hosted 2 pending  ·  acme/app CI failed')
+  server.status = 'not json'
+  await clock.advance(5 * MINUTE + 30_000)
+  expect(shown.status).toBeUndefined()
 })
 
 test('/nudge prefs shows the server preferences', async ($, on) => {
@@ -287,6 +325,52 @@ test('quiet hours still save locally when the server is not signed in', async ($
   await clock.settle()
   expect(await run($, 'quiet 22:00-07:00')).toBe('Quiet hours are now 22:00-07:00.')
   expect(calls.config).toEqual([{ key: 'nudgewhen.quiet_hours', value: '22:00-07:00' }])
+  expect(calls.set).toEqual([])
+})
+
+test('pause and resume keep the local answer when signed out', async ($, on) => {
+  const { clock, calls } = world(on, { connect: needsAuth })
+  await start($)
+  await clock.settle()
+  expect(await run($, 'pause')).toBe('Paused until /nudge resume.')
+  expect(await run($, 'resume')).toBe('Resumed. Nudges are on.')
+  expect(await run($, 'resume')).toBe('Nothing was paused.')
+  expect(calls.set).toEqual([])
+})
+
+test('a server failure on pause adds one line to the local answer', async ($, on) => {
+  const { clock } = world(on, { setError: true })
+  await start($)
+  await clock.settle()
+  const r = (await run($, 'pause until 14:30')).split('\n')
+  expect(r[0]).toBe('Paused until 14:30.')
+  expect(r.length).toBe(2)
+})
+
+test('a snooze is sent to the hosted server as a pause', async ($, on) => {
+  const { clock, calls } = world(on)
+  await start($)
+  await clock.settle()
+  await run($, 'snooze 30m')
+  expect(calls.set[0]).toEqual({ paused_until: NOW + 30 * MINUTE, tz: ZONE })
+})
+
+test('mute needs the prefs to read, a valid repo, and room in the list', async ($, on) => {
+  const down = world(on, { getError: true })
+  await start($)
+  await down.clock.settle()
+  expect(await run($, 'mute acme/web')).toBe('Could not reach your hosted preferences. Try again.')
+  expect(down.calls.set).toEqual([])
+})
+
+test('mute refuses a bad repo and a full list', async ($, on) => {
+  const full = Array.from({ length: 100 }, (_, i) => `a/r${i}`)
+  const { clock, calls } = world(on, { prefs: { ...PREFS, muted_repos: full } })
+  await start($)
+  await clock.settle()
+  expect(await run($, 'mute notarepo')).toMatch(/Usage/)
+  expect(await run($, `mute ${'a'.repeat(100)}/${'b'.repeat(100)}`)).toMatch(/Usage/)
+  expect(await run($, 'mute acme/web')).toMatch(/already mute 100/)
   expect(calls.set).toEqual([])
 })
 

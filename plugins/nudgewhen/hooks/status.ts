@@ -42,11 +42,11 @@ export function setHosted(status: HostedStatus | undefined): void {
   hosted = status
 }
 
-/** The text of a paid segment: empty until a hosted status has arrived. */
-export function paidText(name: Paid): string {
+/** The text of a paid segment at `now`: empty until a hosted status has arrived. */
+export function paidText(name: Paid, now: number): string {
   switch (name) {
     case 'hosted':
-      return hostedText(hosted)
+      return hostedText(hosted, now)
     case 'ci':
       return ciText(hosted)
     case 'reviews':

@@ -103,6 +103,14 @@ test('work hours and days bound the break nudges; quiet hours hold', () => {
   expect(isQuiet(readControls({}).controls, localAt(12))).toBe(false)
 })
 
+test('a work range that wraps midnight keeps its after-midnight part on the day the shift began', () => {
+  const c = readControls({ work_hours: '22:00-06:00', work_days: 'fri' }).controls
+  expect(isWorkTime(c, localAt(23, 0, 13))).toBe(true)
+  expect(isWorkTime(c, localAt(2, 0, 14))).toBe(true)
+  expect(isWorkTime(c, localAt(2, 0, 13))).toBe(false)
+  expect(isWorkTime(c, localAt(12, 0, 13))).toBe(false)
+})
+
 test('the hold is { until }: null means until resume, a number until then', () => {
   const now = localAt(12)
   expect(readHold(undefined)).toBeUndefined()
@@ -122,6 +130,7 @@ test('pause: no argument is until resume, until HH:MM the next such time, tomorr
   expect(parsePause('until 14:30', now, wake)).toEqual({ until: localAt(14, 30) })
   expect(parsePause('until 09:00', now, wake)).toEqual({ until: localAt(9, 0, 11) })
   expect(parsePause('tomorrow', now, wake)).toEqual({ until: localAt(5, 0, 11) })
+  expect(parsePause('tomorrow', localAt(2), wake)).toEqual({ until: localAt(5, 0, 11) })
   expect(parsePause('until noon-ish', now, wake)).toBeNull()
   expect(parsePause('later', now, wake)).toBeNull()
 })
@@ -311,6 +320,18 @@ test('/nudge snooze holds everything for the duration, then a due reminder fires
   expect((await nudge($, 'list')).text).not.toMatch(/Held/)
 })
 
+test('a snooze stops hosted polling until it ends', async ($, on) => {
+  const { clock, shown } = world(on, localAt(12))
+  await start($)
+  await clock.settle()
+  await nudge($, 'snooze 30m')
+  const before = shown.polls
+  await clock.advance(25 * MINUTE)
+  expect(shown.polls).toBe(before)
+  await clock.advance(10 * MINUTE)
+  expect(shown.polls).toBeGreaterThan(before)
+})
+
 test('/nudge snooze refuses what is not a duration', async ($, on) => {
   world(on, localAt(12))
   await start($, false)
@@ -392,4 +413,5 @@ test('/nudge every weekday at sets a repeat that the list reads back', async ($,
   await start($, false)
   const r = await nudge($, 'every weekday at 9:00 standup')
   expect(r.text).toBe('Nudge #1 set for every weekday at 09:00, next 09:00 tomorrow: standup')
+  expect((await nudge($, 'list')).text).toMatch(/#1 {2}every weekday at 09:00, next 09:00 tomorrow {2}standup/)
 })

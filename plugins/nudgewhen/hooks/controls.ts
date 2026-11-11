@@ -109,10 +109,14 @@ export function readControls(options: Readonly<Record<string, unknown>>): { cont
   }
 }
 
-/** Whether break nudges apply at `now`: inside the work days and the work hours, each empty meaning always. */
+/** Whether break nudges apply at `now`: inside the work days and the work hours, each empty meaning always. The after-midnight part of a wrapping shift counts toward the day it began on. */
 export function isWorkTime(c: Controls, now: number): boolean {
-  if (c.workDays !== null && !c.workDays.includes(new Date(now).getDay())) return false
-  return c.work === null || inRange(c.work, minuteOfDay(now))
+  const minute = minuteOfDay(now)
+  if (c.work !== null && !inRange(c.work, minute)) return false
+  if (c.workDays === null) return true
+  const isTail = c.work !== null && c.work.start > c.work.end && minute < c.work.end
+  const day = new Date(now).getDay()
+  return c.workDays.includes(isTail ? (day + 6) % 7 : day)
 }
 
 export function isQuiet(c: Controls, now: number): boolean {
@@ -139,11 +143,19 @@ function nextMinute(minute: number, now: number): number {
   return d.getTime()
 }
 
-/** The hold a `/nudge pause` argument asks for: nothing is until resume, `until HH:MM`, or `tomorrow` (the next wake time); null when it is none of these. */
+/** The local time at `minute` of the day after the one `now` falls on. */
+function tomorrowAt(minute: number, now: number): number {
+  const d = new Date(now)
+  d.setDate(d.getDate() + 1)
+  d.setHours(Math.floor(minute / 60), minute % 60, 0, 0)
+  return d.getTime()
+}
+
+/** The hold a `/nudge pause` argument asks for: nothing is until resume, `until HH:MM`, or `tomorrow` (the wake time on the next day); null when it is none of these. */
 export function parsePause(arg: string, now: number, wakeMin: number): Hold | null {
   const a = arg.trim()
   if (a === '') return { until: null }
-  if (/^tomorrow$/i.test(a)) return { until: nextMinute(wakeMin, now) }
+  if (/^tomorrow$/i.test(a)) return { until: tomorrowAt(wakeMin, now) }
   const m = /^until\s+(\S+)$/i.exec(a)
   const minute = m ? parseHHMM(m[1] ?? '') : null
   return minute === null ? null : { until: nextMinute(minute, now) }

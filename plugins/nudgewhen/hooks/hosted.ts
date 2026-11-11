@@ -48,6 +48,10 @@ function body(result: McpToolResult): Record<string, unknown> | null {
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 const isNumOrNull = (v: unknown): v is number | null => v === null || isNum(v)
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every(x => typeof x === 'string')
+const KINDS_MAX = 20
+
+/** A server list kept to the lengths the controls themselves allow. */
+const capped = (v: string[], count: number, length: number): string[] => v.filter(x => x.length <= length).slice(0, count)
 
 function stamped(v: unknown): Stamped | null | undefined {
   if (v === null) return null
@@ -60,8 +64,8 @@ function stamped(v: unknown): Stamped | null | undefined {
 export function parseHostedStatus(result: McpToolResult): HostedStatus | null {
   const b = body(result)
   if (b === null) return null
-  const ci = stamped(b.last_ci)
-  const review = stamped(b.last_review)
+  const ci = b.last_ci === undefined ? null : stamped(b.last_ci)
+  const review = b.last_review === undefined ? null : stamped(b.last_review)
   if (
     !isNum(b.pending) ||
     !isNumOrNull(b.next_due) ||
@@ -79,7 +83,7 @@ export function parseHostedStatus(result: McpToolResult): HostedStatus | null {
     next_due: b.next_due,
     paused_until: b.paused_until,
     quiet_now: b.quiet_now,
-    kinds: b.kinds,
+    kinds: capped(b.kinds, KINDS_MAX, REPO_MAX),
     muted_repos: b.muted_repos,
     last_ci: ci,
     last_review: review,
@@ -101,8 +105,8 @@ export function parsePrefs(result: McpToolResult): HostedPrefs | null {
     return null
   }
   return {
-    kinds: b.kinds,
-    muted_repos: b.muted_repos,
+    kinds: capped(b.kinds, KINDS_MAX, REPO_MAX),
+    muted_repos: capped(b.muted_repos, MUTED_MAX, REPO_MAX),
     failures_only: b.failures_only,
     quiet: b.quiet,
     tz: b.tz,
@@ -110,10 +114,10 @@ export function parsePrefs(result: McpToolResult): HostedPrefs | null {
   }
 }
 
-/** What the `hosted` segment shows: paused, then quiet, then the pending count, else ok. */
-export function hostedText(s: HostedStatus | undefined): string {
+/** What the `hosted` segment shows at `now`: paused, then quiet, then the pending count, else ok. */
+export function hostedText(s: HostedStatus | undefined, now: number): string {
   if (s === undefined) return ''
-  if (s.paused_until !== null) return 'hosted paused'
+  if (s.paused_until !== null && s.paused_until > now) return 'hosted paused'
   if (s.quiet_now) return 'hosted quiet'
   return s.pending > 0 ? `hosted ${s.pending} pending` : 'hosted ok'
 }
@@ -126,15 +130,16 @@ export function localZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone
 }
 
-/** `prefs` as lines for `/nudge prefs`. */
+/** `prefs` as lines for `/nudge prefs`; the server's words are cleaned and cut before they reach the terminal. */
 export function prefsLines(p: HostedPrefs, now: number): string[] {
+  const list = (items: string[]) => items.map(x => clean(x, REPO_MAX)).join(', ') || 'none'
   const paused = p.paused_until !== null && p.paused_until > now ? 'yes' : 'no'
   return [
     'Hosted preferences:',
-    `  kinds: ${p.kinds.join(', ') || 'none'}`,
-    `  muted repos: ${p.muted_repos.join(', ') || 'none'}`,
+    `  kinds: ${list(p.kinds)}`,
+    `  muted repos: ${list(p.muted_repos)}`,
     `  failures only: ${p.failures_only ? 'on' : 'off'}`,
-    `  quiet hours: ${p.quiet === '' ? 'none' : `${p.quiet} (${p.tz})`}`,
+    `  quiet hours: ${p.quiet === '' ? 'none' : `${clean(p.quiet, 20)} (${clean(p.tz, 40)})`}`,
     `  paused: ${paused}`,
   ]
 }
