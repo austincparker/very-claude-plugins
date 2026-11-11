@@ -3,7 +3,7 @@ name: voice
 posture: labor
 color: yellow
 allowed-tools: Read, Write, Agent, Bash(python3 *skills/voice/scripts/*)
-description: Use when the user is composing or revising prose another human will read — an email, a chat announcement, release notes — or asks "smooth this out", "tighten this up", "make this read naturally", "does this flow?". Also covers diagnosing prose already written for AI narration tells — "devibe this prose", "run the prose devibe pass", "does this read like AI wrote it", "check this doc/README for AI narration". Not for code or comments (see `devibe:asn-lint`), not for pull requests (titles, bodies, comments, reviews), not for commit messages, and not for prose the user is only reading.
+description: Use when the user is composing or revising prose another human will read — an email, a chat announcement, release notes — or asks "smooth this out", "tighten this up", "make this read naturally", "does this flow?". Also covers diagnosing prose already written for AI narration tells — "devibe this prose", "run the prose devibe pass", "does this read like AI wrote it", "check this doc/README for AI narration". Not for code or comments (see `devibe:asn-lint`), not for pull request titles, bodies or reviews, not for commit messages, and not for prose the user is only reading.
 ---
 
 # voice — professional, laid back, friendly, concise
