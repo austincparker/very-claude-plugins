@@ -1,3 +1,5 @@
+import { DAY_NAMES, WEEKDAYS, fmtDays, parseDays } from './controls'
+
 export const MINUTE = 60_000
 const HOUR = 60 * MINUTE
 const DAY = 24 * HOUR
@@ -9,13 +11,20 @@ export type Nudge = {
   everyMs?: number
   /** `HH:MM`, local time: the nudge comes back every day at this time. */
   daily?: string
+  /** With `daily`, the days of the week (sunday 0) it comes back on; absent means every day. */
+  days?: number[]
 }
 
-export type When = { due: number; everyMs?: number; daily?: string; text: string }
+export type When = { due: number; everyMs?: number; daily?: string; days?: number[]; text: string }
 
 export const USAGE = [
   'Usage: /nudge in 20m <text> | at 17:30 <text> | every 45m <text> | every day at 9:00 <text>',
+  '       /nudge every weekday at 9:00 <text> | every mon,wed,fri at 9:00 <text>',
   '       /nudge list | cancel <id> | cancel all | report | forget',
+  '       /nudge snooze 30m | pause | pause until 14:30 | pause tomorrow | resume',
+  '       /nudge bedtime 23:00 | wake 05:00 | hours 09:00-17:00 | days mon,tue | quiet 12:00-13:00',
+  '       /nudge status | status sit,bed,hosted',
+  '       /nudge prefs | mute owner/repo | unmute owner/repo | failures-only on|off | kinds ci,pr_landed',
 ].join('\n')
 
 const MAX_MS = 365 * DAY
@@ -51,12 +60,14 @@ function parseClock(input: string): { hhmm: string; rest: string } | null {
   return { hhmm: `${pad(hour)}:${pad(minute)}`, rest: input.slice(m[0].length) }
 }
 
-/** The next local time at `hhmm` strictly after `now`. */
-export function nextAt(hhmm: string, now: number): number {
+/** The next local time at `hhmm` strictly after `now`, on one of `days` (sunday 0) when given. */
+export function nextAt(hhmm: string, now: number, days?: readonly number[]): number {
   const [h = 0, m = 0] = hhmm.split(':').map(Number)
   const d = new Date(now)
   d.setHours(h, m, 0, 0)
-  if (d.getTime() <= now) d.setDate(d.getDate() + 1)
+  for (let i = 0; i < 9 && (d.getTime() <= now || (days !== undefined && days.length > 0 && !days.includes(d.getDay()))); i++) {
+    d.setDate(d.getDate() + 1)
+  }
   return d.getTime()
 }
 
@@ -71,6 +82,12 @@ const TOO_FAR = 'That is more than a year away. Keep nudges within a year.'
 export function parseWhen(input: string, now: number): When | string {
   const s = input.trim()
   let m: RegExpExecArray | null
+  if ((m = /^every\s+(weekdays?|(?:sun|mon|tue|wed|thu|fri|sat)(?:\s*,\s*(?:sun|mon|tue|wed|thu|fri|sat))*)\s+(?:at\s+)?/i.exec(s))) {
+    const days = /^weekdays?$/i.test(m[1] ?? '') ? [...WEEKDAYS] : parseDays((m[1] ?? '').replace(/\s+/g, ''))
+    const clock = parseClock(s.slice(m[0].length))
+    if (!days || !clock) return `I couldn't read the time in "${s}". Try "every weekday at 9:00 standup" or "every mon,wed,fri at 9:00 standup".`
+    return withText({ due: nextAt(clock.hhmm, now, days), daily: clock.hhmm, days }, clock.rest)
+  }
   if ((m = /^(?:every\s+day|daily)\s+(?:at\s+)?/i.exec(s))) {
     const clock = parseClock(s.slice(m[0].length))
     if (!clock) return `I couldn't read the time in "${s}". Try "every day at 9:00 standup".`
@@ -104,7 +121,7 @@ function withText(when: Omit<When, 'text'>, rest: string): When | string {
 
 /** What is left of a nudge once it has fired at `now`: the next time a repeating one comes back. */
 export function afterFiring(n: Nudge, now: number): Nudge[] {
-  if (n.daily) return [{ ...n, due: nextAt(n.daily, now) }]
+  if (n.daily) return [{ ...n, due: nextAt(n.daily, now, n.days) }]
   if (n.everyMs) {
     const skipped = Math.floor((now - n.due) / n.everyMs) + 1
     return [{ ...n, due: n.due + skipped * n.everyMs }]
@@ -136,12 +153,18 @@ export function span(ms: number): string {
 /** When a nudge comes, as a list row reads it: `14:32 (in 20m)`, `every 45m, next 15:10`. */
 export function describe(n: Nudge, now: number): string {
   const next = `${clock(n.due)}${dayHint(n.due, now)}`
-  if (n.daily) return `every day at ${n.daily}, next ${next}`
+  if (n.daily) return `every ${daysLabel(n.days)} at ${n.daily}, next ${next}`
   if (n.everyMs) return `every ${span(n.everyMs)}, next ${next}`
   return `${next} (in ${span(n.due - now)})`
 }
 
-function dayHint(due: number, now: number): string {
+function daysLabel(days: readonly number[] | undefined): string {
+  if (!Array.isArray(days) || days.length === 0 || days.length === DAY_NAMES.length) return 'day'
+  const week = [...days].sort((a, b) => a - b)
+  return week.join() === WEEKDAYS.join() ? 'weekday' : fmtDays(week)
+}
+
+export function dayHint(due: number, now: number): string {
   const a = new Date(now)
   const b = new Date(due)
   if (a.toDateString() === b.toDateString()) return ''

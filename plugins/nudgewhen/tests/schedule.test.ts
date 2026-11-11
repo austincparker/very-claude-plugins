@@ -66,6 +66,13 @@ test('afterFiring: a one-shot is gone, a repeat skips what it missed', async () 
   expect(afterFiring(daily, at(9, 0))).toEqual([{ ...daily, due: at(9, 0, 1) }])
 })
 
+test('nextAt with days lands on a listed day, strictly after now', async () => {
+  expect(nextAt('13:00', NOON, [2])).toBe(at(13, 0))
+  expect(nextAt('12:00', NOON, [2])).toBe(at(12, 0, 7))
+  expect(nextAt('13:00', NOON, [3])).toBe(at(13, 0, 1))
+  expect(nextAt('12:00', NOON, [])).toBe(at(12, 0, 1))
+})
+
 test('nextAt is strictly after now', async () => {
   expect(nextAt('12:00', NOON)).toBe(at(12, 0, 1))
   expect(nextAt('12:01', NOON)).toBe(at(12, 1))

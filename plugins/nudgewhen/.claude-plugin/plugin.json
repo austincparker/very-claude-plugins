@@ -2,10 +2,15 @@
   "name": "nudgewhen",
   "version": "0.1.0",
   "description": "Nudges in Claude Code: take a break, go to bed, and any reminder you set with /nudge or by asking Claude.",
-  "author": { "name": "Austin Parker" },
+  "author": {
+    "name": "Austin Parker"
+  },
   "license": "MIT",
   "mcpServers": {
-    "nudgewhen": { "type": "http", "url": "https://nudgewhen.dev/mcp" }
+    "nudgewhen": {
+      "type": "http",
+      "url": "https://nudgewhen.dev/mcp"
+    }
   },
   "userConfig": {
     "sit_minutes": {
@@ -30,21 +35,41 @@
       "description": "Show a wrap-up nudge in the status line between bedtime and wake-up.",
       "default": true
     },
-    "bedtime_hour": {
-      "type": "number",
-      "title": "Bedtime (hour, 0-23)",
-      "description": "Local hour the bedtime nudge starts.",
-      "default": 23,
-      "min": 0,
-      "max": 23
+    "bedtime": {
+      "type": "string",
+      "title": "Bedtime (HH:MM)",
+      "description": "Local time the bedtime nudge starts, as HH:MM in 24-hour time.",
+      "default": "23:00"
     },
-    "wake_hour": {
-      "type": "number",
-      "title": "Wake-up (hour, 0-23)",
-      "description": "Local hour the bedtime nudge ends.",
-      "default": 5,
-      "min": 0,
-      "max": 23
+    "wake": {
+      "type": "string",
+      "title": "Wake-up (HH:MM)",
+      "description": "Local time the bedtime nudge ends, as HH:MM in 24-hour time.",
+      "default": "05:00"
+    },
+    "work_hours": {
+      "type": "string",
+      "title": "Work hours (HH:MM-HH:MM)",
+      "description": "Break nudges only run inside these hours. Empty means always.",
+      "default": ""
+    },
+    "work_days": {
+      "type": "string",
+      "title": "Work days",
+      "description": "Break nudges only run on these days, a comma list of mon, tue, wed, thu, fri, sat, sun. Empty means every day.",
+      "default": ""
+    },
+    "quiet_hours": {
+      "type": "string",
+      "title": "Quiet hours (HH:MM-HH:MM)",
+      "description": "No toasts or notifications in these hours; the status line still shows. A reminder that came due fires when they end. Empty means none.",
+      "default": ""
+    },
+    "status_segments": {
+      "type": "string",
+      "title": "Status line segments",
+      "description": "A comma list in display order. Free: sit, break, next, bed, breaks, context, limits, cost, model, branch. Hosted: hosted, ci, reviews. Unknown names are skipped.",
+      "default": "sit,bed,hosted"
     }
   }
 }
