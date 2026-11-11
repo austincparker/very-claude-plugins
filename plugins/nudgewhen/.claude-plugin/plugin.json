@@ -4,6 +4,9 @@
   "description": "Nudges in Claude Code: take a break, go to bed, and any reminder you set with /nudge or by asking Claude.",
   "author": { "name": "Austin Parker" },
   "license": "MIT",
+  "mcpServers": {
+    "nudgewhen": { "type": "http", "url": "https://nudgewhen.dev/mcp" }
+  },
   "userConfig": {
     "sit_minutes": {
       "type": "number",
