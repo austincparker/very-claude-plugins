@@ -149,7 +149,7 @@ test('a weekday repeat skips the weekend, and says so in the list', () => {
 })
 
 /** The engine beneath the mod: idle machine, recorded toasts, notifications and config writes, hosted polls on demand. */
-function world(on: On, now: number, entries: Record<string, unknown> = {}, hostedNudges: unknown[] = []) {
+function world(on: On, now: number, entries: Record<string, unknown> = {}, hostedNudges: unknown[] = [], configError?: string) {
   const clock = mock.clock(on, { now })
   mock.store(on, entries)
   const shown = {
@@ -181,6 +181,7 @@ function world(on: On, now: number, entries: Record<string, unknown> = {}, hoste
   on('ui.log', () => ({ value: undefined }))
   on('tool.call', () => ({ result: {} }))
   on('config.set', (_, e) => {
+    if (configError !== undefined) throw new Error(configError)
     shown.config.push({ key: e.key, value: e.value })
     return { value: e.value }
   })
@@ -363,6 +364,14 @@ test('/nudge bedtime, wake, hours, days and quiet validate, then write through c
   expect((await nudge($, 'days monday')).text).toMatch(/Usage: \/nudge days mon,tue/)
   expect((await nudge($, 'quiet 5')).text).toMatch(/Usage: \/nudge quiet HH:MM-HH:MM/)
   expect(shown.config).toEqual([])
+})
+
+test('a config row the engine does not have answers with a message and keeps the command alive', async ($, on) => {
+  world(on, localAt(12), {}, [], 'no /config row with key nudgewhen.status_segments')
+  await start($, false)
+  const text = (await nudge($, 'status sit,bed')).text
+  expect(text).toMatch(/^Could not change status_segments: /)
+  expect(text).toMatch(/Set it in \/config instead\.$/)
 })
 
 test('an empty hours, days or quiet clears the setting', async ($, on) => {

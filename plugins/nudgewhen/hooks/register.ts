@@ -518,8 +518,12 @@ async function forget($: EngineInterface): Promise<string> {
 
 /** Writes one `userConfig` field through the engine; null on success, else why it was refused. */
 async function setting($: EngineInterface, key: string, value: string): Promise<string | null> {
-  const r = await $.config.set({ key: `nudgewhen.${key}`, value })
-  return r.deny === undefined ? null : `Could not change ${key}: ${r.deny}`
+  try {
+    const r = await $.config.set({ key: `nudgewhen.${key}`, value })
+    return r.deny === undefined ? null : `Could not change ${key}: ${r.deny}`
+  } catch (err) {
+    return `Could not change ${key}: ${err instanceof Error ? err.message : String(err)}. Set it in /config instead.`
+  }
 }
 
 async function hold($: EngineInterface, h: Hold) {
