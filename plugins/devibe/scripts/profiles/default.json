@@ -1,0 +1,87 @@
+{
+  "profile": "default",
+  "note": "A starting point, not a universal AI-slop list. Point VOICE_PROFILE at your own profile to replace it. A rule belongs here only if it almost never appears in your own writing and shows up often in machine drafts.",
+  "structural": {
+    "paired_dashes": {
+      "enabled": true,
+      "guidance": "two dashes bracketing an aside in one sentence. Split the sentence, or use commas or parentheses."
+    },
+    "en_dash": {
+      "enabled": true,
+      "guidance": "an en dash between words. Use a spaced hyphen or an em dash."
+    }
+  },
+  "phrases": [
+    {
+      "pattern": "\\bworth noting\\b"
+    },
+    {
+      "pattern": "\\blandscape\\b"
+    },
+    {
+      "pattern": "\\brobust"
+    },
+    {
+      "pattern": "\\bthe fact that\\b"
+    },
+    {
+      "pattern": "\\bcrucial"
+    }
+  ],
+  "spellings": {
+    "guidance": "a British spelling. Use American English.",
+    "patterns": [
+      "behaviour",
+      "organis",
+      "analyse",
+      "catalogue",
+      "defence",
+      "favourite",
+      "realise",
+      "recognise",
+      "centre",
+      "honour",
+      "flavour",
+      "neighbour",
+      "apologise",
+      "colour"
+    ]
+  },
+  "crowd_list_audit": {
+    "lesson": "A crowd-sourced slop list is a hypothesis generator, not a ruleset. Measure every candidate against the author's own writing before adopting it."
+  },
+  "rejected": {
+    "note": "Common candidates that are ordinary vocabulary for many writers. Measure against your own writing before adding any of them.",
+    "common_words": [
+      "utilize",
+      "leverage",
+      "in order to",
+      "comprehensive",
+      "dive into",
+      "game-changer",
+      "at the end of the day",
+      "elevate",
+      "unlock",
+      "harness"
+    ],
+    "rare_in_most_writing": [
+      "delve",
+      "tapestry",
+      "testament to",
+      "realm of",
+      "navigate the complexities",
+      "please find attached",
+      "per my last email",
+      "circling back",
+      "reaching out",
+      "moreover",
+      "furthermore",
+      "in conclusion",
+      "boasts",
+      "towards",
+      "whilst",
+      "amongst",
+      "learnt"
+    ]
+  }
+}

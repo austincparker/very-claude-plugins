@@ -1,0 +1,21 @@
+{
+  "name": "devibe",
+  "version": "1.0.0",
+  "description": "The human pass over machine-written work: asn-lint for backward-looking narration in code, voice for outgoing prose, and a stateless gate that denies prose carrying common machine tells.",
+  "author": {
+    "name": "Austin Parker"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/austincparker/very-claude-plugins/tree/main/plugins/devibe",
+  "repository": "https://github.com/austincparker/very-claude-plugins",
+  "keywords": [
+    "linting",
+    "code-quality",
+    "prose",
+    "narration",
+    "scaffolding",
+    "voice",
+    "style",
+    "hooks"
+  ]
+}
