@@ -1,5 +1,7 @@
 import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 
+import { batches, delayAfter, parsePoll, readIds, readSeen } from './cloud'
+import type { HostedNudge } from './cloud'
 import { MINUTE, USAGE, afterFiring, describe, hourLabel, isBedtime, parseWhen, span } from './schedule'
 import type { Nudge } from './schedule'
 import { SAMPLE_MS, isSampler, localStamp, num, readLog, readSit, report, satMinutes, step } from './sitting'
@@ -17,6 +19,7 @@ const NUDGES_MAX = 100
 const OWNER_MS = 3 * TICK_MS
 const REPROBE_MS = 10 * MINUTE
 const TOOL = 'mcp__nudgewhen__nudge'
+const CLOUD = 'nudgewhen'
 
 const TOOL_DESCRIPTION = [
   "Sets, lists or cancels the person's nudges: reminders that show in Claude Code and as a desktop notification when due.",
@@ -163,6 +166,77 @@ async function fireDue($: EngineInterface) {
   }
 }
 
+type Attempt = { nudges: HostedNudge[]; server: string } | { reason: string }
+
+async function attempt($: EngineInterface): Promise<Attempt> {
+  try {
+    const c = await $.mcp.connect(CLOUD)
+    if (!c.isConnected) return { reason: c.reason }
+    const nudges = parsePoll(await $.mcp.call(c.server, 'poll_nudges', {}))
+    return nudges === null ? { reason: 'bad poll result' } : { nudges, server: c.server }
+  } catch (err) {
+    return { reason: `call failed: ${String(err)}` }
+  }
+}
+
+async function ackAll($: EngineInterface, server: string, ids: string[]): Promise<string[]> {
+  const failed: string[] = []
+  for (const batch of batches(ids)) {
+    try {
+      const r = await $.mcp.call(server, 'ack_nudges', { ids: batch })
+      if (r.isError) failed.push(...batch)
+    } catch {
+      failed.push(...batch)
+    }
+  }
+  return failed
+}
+
+/** Records the outcome of one attempt; returns the nudges to show now. */
+function settle($: EngineInterface, now: number, got: Attempt): Promise<{ fresh: HostedNudge[]; ack: string[] }> {
+  return locked(async () => {
+    const fails = 'nudges' in got ? 0 : (num(await $.store.get('cloudFails')) ?? 0) + 1
+    const wasUp = (await $.store.get('cloudUp')) !== false
+    await $.store.set('cloudFails', fails)
+    await $.store.set('cloudNext', now + delayAfter(fails))
+    await $.store.set('cloudUp', 'nudges' in got)
+    if ('reason' in got) {
+      if (wasUp) $.ui.log(`nudgewhen: hosted nudges unavailable (${got.reason}); local nudges keep running`, { to: 'debug' })
+      return { fresh: [], ack: [] }
+    }
+    if (!wasUp) $.ui.log('nudgewhen: connected to hosted nudges', { to: 'debug' })
+    const seen = readSeen(await $.store.get('cloudSeen'), now)
+    const known = new Set(seen.map(s => s.id))
+    const fresh = got.nudges.filter((n, i) => !known.has(n.id) && got.nudges.findIndex(m => m.id === n.id) === i)
+    const handedBack = got.nudges.filter(n => known.has(n.id)).map(n => n.id)
+    await $.store.set('cloudSeen', [...seen, ...fresh.map(n => ({ id: n.id, at: now }))])
+    if (fresh.length > 0) {
+      const shown = readFired(await $.store.get('fired')).filter(f => now - f.at < SHOW_FIRED_MS)
+      await $.store.set('fired', [...shown, ...fresh.map(n => ({ id: 0, text: `${n.source}: ${n.text}`, at: now }))])
+    }
+    const pending = readIds(await $.store.get('cloudPending'))
+    return { fresh, ack: [...new Set([...pending, ...handedBack, ...fresh.map(n => n.id)])] }
+  })
+}
+
+async function pollCloud($: EngineInterface) {
+  const now = await $.clock.now()
+  const isDue = await locked(async () => {
+    if (!(await ownsFiring($, now))) return false
+    return now >= (num(await $.store.get('cloudNext')) ?? 0)
+  })
+  if (!isDue) return
+  const got = await attempt($)
+  const { fresh, ack } = await settle($, now, got)
+  for (const n of fresh) {
+    $.ui.toast(`nudge (${n.source}): ${n.text}`, { timeoutMs: 15_000 })
+    $.ui.notify(n.text, { title: `nudgewhen - ${n.source}` }).catch(() => undefined)
+  }
+  if (!('server' in got) || ack.length === 0) return
+  const failed = await ackAll($, got.server, ack)
+  await locked(() => $.store.set('cloudPending', failed))
+}
+
 async function refreshStatus($: EngineInterface) {
   const { cfg } = state
   const now = await $.clock.now()
@@ -189,6 +263,7 @@ async function tick($: EngineInterface) {
   try {
     if (state.ticks++ % (SAMPLE_MS / TICK_MS) === 0) await sample($)
     await fireDue($)
+    await pollCloud($)
     await refreshStatus($)
   } catch (err) {
     $.ui.log(`nudgewhen: ${String(err)}`, { to: 'debug' })
