@@ -27,7 +27,7 @@ const needsAuth: McpConnectResult = {
 function world(
   on: On,
   now: number,
-  script: { connects?: Step[]; polls?: Reply[]; acks?: Reply[] } = {},
+  script: { connects?: Step[]; polls?: Reply[]; acks?: Reply[]; hang?: 'connect' } = {},
   entries: Record<string, unknown> = {},
 ) {
   const clock = mock.clock(on, { now })
@@ -38,7 +38,7 @@ function world(
     status: undefined as string | undefined,
     logs: [] as string[],
   }
-  const calls = { connects: [] as number[], polls: [] as number[], acks: [] as string[][] }
+  const calls = { names: [] as string[], connects: [] as number[], polls: [] as number[], acks: [] as string[][] }
   const queues = {
     connects: [...(script.connects ?? [connected])],
     polls: [...(script.polls ?? [poll([])])],
@@ -70,8 +70,10 @@ function world(
     return { value: undefined }
   })
   on('tool.call', () => ({ result: {} }))
-  on('mcp.connect', async () => {
+  on('mcp.connect', async (_, e) => {
     calls.connects.push(0)
+    calls.names.push((e as { server?: string }).server ?? '')
+    if (script.hang === 'connect') return new Promise<never>(() => undefined)
     const step = take<Step>(queues.connects, connected)
     if (step === 'throw') throw new Error('connect exploded')
     return { value: step }
@@ -273,4 +275,48 @@ test('a session that is not the owner never polls', async ($, on) => {
   await clock.advance(5 * MINUTE)
   expect(calls.connects.length).toBe(0)
   expect(calls.polls.length).toBe(0)
+})
+
+test('connect is asked for the server by the name the manifest gives it', async ($, on) => {
+  const { clock, calls } = world(on, NOW)
+  await start($)
+  await clock.settle()
+  expect(calls.names).toEqual(['nudgewhen'])
+})
+
+test('a connect that never answers times out, backs off, and local nudges keep firing', async ($, on) => {
+  const nudges = [{ id: 1, text: 'tea', due: NOW + 60_000 }]
+  const { clock, shown, calls } = world(on, NOW, { hang: 'connect' }, { nudges })
+  await start($)
+  await clock.settle()
+  await clock.advance(61_000)
+  expect(shown.toasts).toEqual(['nudge: tea'])
+  await clock.advance(61_000)
+  expect(calls.connects.length).toBe(2)
+})
+
+test('parsePoll returns null for a result without a content array and for text with no text block', () => {
+  expect(parsePoll({ isError: false } as unknown as McpToolResult)).toBeNull()
+  expect(parsePoll({ content: null, isError: false } as unknown as McpToolResult)).toBeNull()
+  expect(parsePoll(text({ nudges: [] }).content ? { content: [null], isError: false } as unknown as McpToolResult : text(''))).toBeNull()
+  expect(parsePoll(text(JSON.stringify([])))).toBeNull()
+})
+
+test('control characters are stripped and long strings capped before anything is shown', async ($, on) => {
+  const evil = hosted('a', 'cal\x1b[31mx\nendar', `hi\x07\r\nthere${'z'.repeat(400)}`)
+  const { clock, shown } = world(on, NOW, { polls: [poll([evil])] })
+  await start($)
+  await clock.settle()
+  expect(shown.toasts.length).toBe(1)
+  expect(shown.toasts[0]).not.toMatch(/[\u0000-\u001f\u007f]/)
+  expect(shown.toasts[0]!.length).toBeLessThan(400)
+})
+
+test('ids still pending are acked again with the next poll', async ($, on) => {
+  const { clock, calls } = world(on, NOW, { polls: [poll([hosted('a')]), poll([])], acks: ['throw', text({})] }, { cloudPending: ['old'] })
+  await start($)
+  await clock.settle()
+  expect(calls.acks).toEqual([['old', 'a']])
+  await clock.advance(MINUTE)
+  expect(calls.acks).toEqual([['old', 'a'], ['old', 'a']])
 })
