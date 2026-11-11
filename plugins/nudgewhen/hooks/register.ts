@@ -19,6 +19,19 @@ import {
   readHold,
 } from './controls'
 import type { Controls, Hold } from './controls'
+import {
+  KINDS,
+  MUTED_MAX,
+  PAUSE_FOREVER,
+  REPO,
+  REPO_MAX,
+  SIGN_IN_HINT,
+  STATUS_MS,
+  localZone,
+  parseHostedStatus,
+  parsePrefs,
+  prefsLines,
+} from './hosted'
 import { MINUTE, USAGE, afterFiring, clock, dayHint, describe, parseWhen, span } from './schedule'
 import type { Nudge } from './schedule'
 import {
@@ -36,6 +49,7 @@ import {
   nextText,
   paidText,
   parseSegments,
+  setHosted,
   sitText,
   unknownSegments,
 } from './status'
@@ -76,6 +90,8 @@ const fresh = () => ({
   ticks: 0,
   isBusy: false,
   cloudRun: undefined as object | undefined,
+  statusAt: 0,
+  statusRun: false,
   isPrompting: false,
   stop: undefined as (() => void) | undefined,
   queue: Promise.resolve() as Promise<unknown>,
@@ -284,6 +300,7 @@ function settle($: EngineInterface, got: Attempt): Promise<{ fresh: HostedNudge[
     await $.store.set('cloudFails', fails)
     await $.store.set('cloudNext', now + delayAfter(fails))
     await $.store.set('cloudUp', 'nudges' in got)
+    if ('server' in got) await $.store.set('cloudServer', got.server)
     if ('reason' in got) {
       if (wasUp) $.ui.log(`nudgewhen: hosted nudges unavailable (${got.reason}); local nudges keep running`, { to: 'debug' })
       return { fresh: [], ack: [] }
@@ -339,6 +356,31 @@ async function pollCloud($: EngineInterface) {
     })
   } finally {
     if (state.cloudRun === run) state.cloudRun = undefined
+  }
+}
+
+/** Reads `hosted_status` every `STATUS_MS` while the hosted server is connected, and clears the paid segments when it is not. */
+async function fetchHostedStatus($: EngineInterface) {
+  if (state.statusRun) return
+  const now = await $.clock.now()
+  if (now - state.statusAt < STATUS_MS) return
+  const server = await $.store.get('cloudServer')
+  if ((await $.store.get('cloudUp')) !== true || typeof server !== 'string') {
+    setHosted(undefined)
+    return
+  }
+  state.statusAt = now
+  state.statusRun = true
+  const stop = state.stop
+  try {
+    const status = parseHostedStatus(await timed($, $.mcp.call(server, 'hosted_status', {})))
+    if (state.stop !== stop) return
+    setHosted(status ?? undefined)
+    await refreshStatus($)
+  } catch {
+    setHosted(undefined)
+  } finally {
+    state.statusRun = false
   }
 }
 
@@ -414,6 +456,7 @@ async function tick($: EngineInterface) {
     await fireDue($)
     await flushWarnings($, await $.clock.now())
     void pollCloud($).catch(err => $.ui.log(`nudgewhen: ${String(err)}`, { to: 'debug' }))
+    void fetchHostedStatus($).catch(() => undefined)
     await refreshStatus($)
   } catch (err) {
     $.ui.log(`nudgewhen: ${String(err)}`, { to: 'debug' })
@@ -494,6 +537,89 @@ async function statusCommand($: EngineInterface, arg: string): Promise<string> {
   return (await setting($, 'status_segments', list)) ?? `Status line is now: ${list}.`
 }
 
+const KIND_LIST = KINDS.join(',')
+
+/** The hosted server's name when it is connected, else null. */
+async function hostedServer($: EngineInterface): Promise<string | null> {
+  try {
+    const c = await timed($, $.mcp.connect(CLOUD))
+    return c.isConnected ? c.server : null
+  } catch {
+    return null
+  }
+}
+
+/** Calls a hosted tool; null when the call throws or the server answers with an error. */
+async function hostedCall($: EngineInterface, server: string, tool: string, args: Record<string, unknown>) {
+  try {
+    const r = await timed($, $.mcp.call(server, tool, args))
+    return r.isError ? null : r
+  } catch {
+    return null
+  }
+}
+
+/** Sends `update` to the hosted server beside the local change; empty when it is not connected, one line when the server refuses. */
+async function syncHosted($: EngineInterface, update: Record<string, unknown>): Promise<string> {
+  const server = await hostedServer($)
+  if (server === null) return ''
+  const r = await hostedCall($, server, 'set_prefs', { ...update, tz: localZone() })
+  return r === null ? '\nHosted sync failed: /nudge prefs shows what the server has.' : ''
+}
+
+const HOSTED_FAILED = 'Could not reach your hosted preferences. Try again.'
+
+async function hostedControl($: EngineInterface, verb: string, arg: string, now: number): Promise<string> {
+  let update: Record<string, unknown> | undefined
+  let done = ''
+  let muted: string | undefined
+  switch (verb) {
+    case 'prefs':
+      break
+    case 'mute':
+    case 'unmute': {
+      if (!REPO.test(arg) || arg.length > REPO_MAX) return `Usage: /nudge ${verb} owner/repo`
+      muted = arg.toLowerCase()
+      break
+    }
+    case 'failures-only': {
+      const on = /^on$/i.test(arg)
+      if (!on && !/^off$/i.test(arg)) return 'Usage: /nudge failures-only on|off'
+      update = { failures_only: on }
+      done = `Failures only is ${on ? 'on' : 'off'}.`
+      break
+    }
+    default: {
+      const kinds = [...new Set(arg.split(/[\s,]+/).filter(k => k !== '').map(k => k.toLowerCase()))]
+      if (kinds.length === 0) return `Usage: /nudge kinds ${KIND_LIST}`
+      const bad = kinds.filter(k => !(KINDS as readonly string[]).includes(k))
+      if (bad.length > 0) return `Unknown kind: ${bad.join(', ')}. Kinds: ${KINDS.join(', ')}`
+      update = { kinds }
+      done = `Hosted nudges now cover: ${kinds.join(', ')}.`
+    }
+  }
+  const server = await hostedServer($)
+  if (server === null) return SIGN_IN_HINT
+  if (verb === 'prefs' || muted !== undefined) {
+    const got = await hostedCall($, server, 'get_prefs', {})
+    const prefs = got === null ? null : parsePrefs(got)
+    if (prefs === null) return HOSTED_FAILED
+    if (verb === 'prefs') return prefsLines(prefs, now).join('\n')
+    const has = prefs.muted_repos.some(r => r.toLowerCase() === muted)
+    if (verb === 'mute') {
+      if (has) return `${muted} is already muted.`
+      if (prefs.muted_repos.length >= MUTED_MAX) return `You already mute ${MUTED_MAX} repos. Unmute some first.`
+      update = { muted_repos: [...prefs.muted_repos, muted] }
+      done = `Muted ${muted}.`
+    } else {
+      if (!has) return `${muted} is not muted.`
+      update = { muted_repos: prefs.muted_repos.filter(r => r.toLowerCase() !== muted) }
+      done = `Unmuted ${muted}.`
+    }
+  }
+  return (await hostedCall($, server, 'set_prefs', update ?? {})) === null ? 'The server refused that change. /nudge prefs shows what it has.' : done
+}
+
 async function control($: EngineInterface, verb: string, arg: string, now: number): Promise<string> {
   const { controls } = state.cfg
   const until = (h: Hold) => (h.until === null ? '/nudge resume' : `${clock(h.until)}${dayHint(h.until, now)}`)
@@ -509,12 +635,12 @@ async function control($: EngineInterface, verb: string, arg: string, now: numbe
       const h = parsePause(arg, now, controls.wakeMin)
       if (h === null) return 'Try "/nudge pause until 14:30" or "/nudge pause tomorrow", or "/nudge pause" to pause until /nudge resume.'
       await hold($, h)
-      return `Paused until ${until(h)}.`
+      return `Paused until ${until(h)}.${await syncHosted($, { paused_until: h.until ?? PAUSE_FOREVER })}`
     }
     case 'resume': {
       const was = isHeld(readHold(await $.store.get('hold')), now)
       await locked(() => $.store.delete('hold'))
-      return was ? 'Resumed. Nudges are on.' : 'Nothing was paused.'
+      return `${was ? 'Resumed. Nudges are on.' : 'Nothing was paused.'}${await syncHosted($, { paused_until: null })}`
     }
     case 'bedtime':
     case 'wake': {
@@ -528,11 +654,16 @@ async function control($: EngineInterface, verb: string, arg: string, now: numbe
       const noun = verb === 'hours' ? 'Work hours' : 'Quiet hours'
       const key = verb === 'hours' ? 'work_hours' : 'quiet_hours'
       if (arg === '') {
-        return (await setting($, key, '')) ?? (verb === 'hours' ? 'Work hours cleared: break nudges run all day.' : 'Quiet hours cleared.')
+        const err = await setting($, key, '')
+        if (err !== null) return err
+        if (verb === 'hours') return 'Work hours cleared: break nudges run all day.'
+        return `Quiet hours cleared.${await syncHosted($, { quiet: '' })}`
       }
       const range = parseRange(arg)
       if (range === null) return `Usage: /nudge ${verb} HH:MM-HH:MM (for example ${verb === 'hours' ? '09:00-17:00' : '22:00-07:00'}); /nudge ${verb} alone clears it.`
-      return (await setting($, key, fmtRange(range))) ?? `${noun} are now ${fmtRange(range)}.`
+      const err = await setting($, key, fmtRange(range))
+      if (err !== null) return err
+      return `${noun} are now ${fmtRange(range)}.${verb === 'quiet' ? await syncHosted($, { quiet: fmtRange(range) }) : ''}`
     }
     default: {
       if (arg === '') return (await setting($, 'work_days', '')) ?? 'Work days cleared: break nudges run every day.'
@@ -552,6 +683,8 @@ async function handle($: EngineInterface, args: string): Promise<string> {
   if (/^forget$/i.test(a)) return forget($)
   const st = /^status(?:\s+(.*))?$/i.exec(a)
   if (st) return statusCommand($, (st[1] ?? '').trim())
+  const hc = /^(prefs|mute|unmute|failures-only|kinds)(?:\s+(.*))?$/i.exec(a)
+  if (hc) return hostedControl($, (hc[1] ?? '').toLowerCase(), (hc[2] ?? '').trim(), now)
   const v = /^(snooze|pause|resume|bedtime|wake|hours|days|quiet)(?:\s+(.*))?$/i.exec(a)
   if (v) return control($, (v[1] ?? '').toLowerCase(), (v[2] ?? '').trim(), now)
   const m = /^(?:cancel|clear|remove|rm|delete)\s+(.+)$/i.exec(a)
@@ -600,6 +733,7 @@ async function noteInput($: EngineInterface) {
 
 export const register: Register = (on, options) => {
   state.stop?.()
+  setHosted(undefined)
   const { queue } = state
   Object.assign(state, fresh(), { queue })
   const read = config(options)
@@ -640,6 +774,7 @@ export const register: Register = (on, options) => {
     state.stop?.()
     state.stop = undefined
     state.cloudRun = undefined
+    setHosted(undefined)
     return next(e)
   })
 

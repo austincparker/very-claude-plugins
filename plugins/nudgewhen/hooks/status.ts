@@ -1,4 +1,6 @@
 import { fmtHHMM, minuteOfDay } from './controls'
+import { ciText, hostedText, reviewsText } from './hosted'
+import type { HostedStatus } from './hosted'
 import { MINUTE, clock, dayHint, hourLabel, isBedtime, span } from './schedule'
 import type { Nudge } from './schedule'
 import { localStamp } from './sitting'
@@ -33,9 +35,23 @@ export function unknownSegments(list: string): string[] {
   return [...new Set(tokens(list))].filter(t => !isKnown(t))
 }
 
-/** The text of a paid segment: empty until the hosted server is connected. */
-export function paidText(_name: Paid): string {
-  return ''
+let hosted: HostedStatus | undefined
+
+/** Keeps the latest `hosted_status` reading for the paid segments; `undefined` clears it. */
+export function setHosted(status: HostedStatus | undefined): void {
+  hosted = status
+}
+
+/** The text of a paid segment: empty until a hosted status has arrived. */
+export function paidText(name: Paid): string {
+  switch (name) {
+    case 'hosted':
+      return hostedText(hosted)
+    case 'ci':
+      return ciText(hosted)
+    case 'reviews':
+      return reviewsText(hosted)
+  }
 }
 
 export function isPaid(name: string): name is Paid {

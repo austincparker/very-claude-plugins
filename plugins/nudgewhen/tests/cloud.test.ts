@@ -87,6 +87,7 @@ function world(
       if (r === 'throw') throw new Error('no connected MCP tool "poll_nudges"')
       return { value: r }
     }
+    if (e.tool === 'hosted_status') return { value: text({}) }
     calls.acks.push((e.args.ids as string[]) ?? [])
     if (script.hang === 'ack') return new Promise<never>(() => undefined)
     const r = take<Reply>(queues.acks, text({ acked: e.args.ids, unknown: [] }))
