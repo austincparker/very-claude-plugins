@@ -2,7 +2,7 @@ import type { McpConnectResult, McpToolResult, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { MINUTE } from '../hooks/schedule'
-import { delayAfter, parsePoll } from '../hooks/cloud'
+import { HOSTED_MAX, clean, delayAfter, parsePoll } from '../hooks/cloud'
 
 const SERVER = 'plugin:nudgewhen:nudgewhen'
 const HOUR = 60 * MINUTE
@@ -27,7 +27,7 @@ const needsAuth: McpConnectResult = {
 function world(
   on: On,
   now: number,
-  script: { connects?: Step[]; polls?: Reply[]; acks?: Reply[]; hang?: 'connect' } = {},
+  script: { connects?: Step[]; polls?: Reply[]; acks?: Reply[]; hang?: 'connect' | 'poll' | 'ack' } = {},
   entries: Record<string, unknown> = {},
 ) {
   const clock = mock.clock(on, { now })
@@ -38,7 +38,7 @@ function world(
     status: undefined as string | undefined,
     logs: [] as string[],
   }
-  const calls = { names: [] as string[], connects: [] as number[], polls: [] as number[], acks: [] as string[][] }
+  const calls = { names: [] as string[], connects: [] as number[], polls: [] as number[], acks: [] as string[][], servers: [] as string[] }
   const queues = {
     connects: [...(script.connects ?? [connected])],
     polls: [...(script.polls ?? [poll([])])],
@@ -79,13 +79,16 @@ function world(
     return { value: step }
   })
   on('mcp.call', (_, e) => {
+    calls.servers.push(e.server)
     if (e.tool === 'poll_nudges') {
       calls.polls.push(0)
+      if (script.hang === 'poll') return new Promise<never>(() => undefined)
       const r = take<Reply>(queues.polls, poll([]))
       if (r === 'throw') throw new Error('no connected MCP tool "poll_nudges"')
       return { value: r }
     }
     calls.acks.push((e.args.ids as string[]) ?? [])
+    if (script.hang === 'ack') return new Promise<never>(() => undefined)
     const r = take<Reply>(queues.acks, text({ acked: e.args.ids, unknown: [] }))
     if (r === 'throw') throw new Error('no connected MCP tool "ack_nudges"')
     return { value: r }
@@ -148,8 +151,9 @@ test('each hosted nudge shows through toast, notification and status, and the ac
 })
 
 test('an ack goes out 100 ids at a time', async ($, on) => {
-  const many = Array.from({ length: 150 }, (_, i) => hosted(`n${i}`))
-  const { clock, calls } = world(on, NOW, { polls: [poll(many)] })
+  const many = Array.from({ length: 100 }, (_, i) => hosted(`n${i}`))
+  const old = Array.from({ length: 50 }, (_, i) => `old${i}`)
+  const { clock, calls } = world(on, NOW, { polls: [poll(many)] }, { cloudPending: old })
   await start($)
   await clock.settle()
   expect(calls.acks.map(a => a.length)).toEqual([100, 50])
@@ -282,6 +286,65 @@ test('connect is asked for the server by the name the manifest gives it', async 
   await start($)
   await clock.settle()
   expect(calls.names).toEqual(['nudgewhen'])
+})
+
+test('poll_nudges and ack_nudges are called on the server name connect returned', async ($, on) => {
+  const { clock, calls } = world(on, NOW, { polls: [poll([hosted('a')])] })
+  await start($)
+  await clock.settle()
+  expect(calls.servers).toEqual([SERVER, SERVER])
+  expect(calls.servers).not.toContain('nudgewhen')
+})
+
+test('a hung poll_nudges times out, backs off, and local nudges fire on time', async ($, on) => {
+  const nudges = [{ id: 1, text: 'tea', due: NOW + 20_000 }]
+  const { clock, shown, calls } = world(on, NOW, { hang: 'poll' }, { nudges })
+  await start($)
+  await clock.settle()
+  await clock.advance(30_000)
+  expect(shown.toasts).toEqual(['nudge: tea'])
+  await clock.advance(2 * MINUTE)
+  expect(calls.polls.length).toBe(2)
+  expect(shown.toasts).toEqual(['nudge: tea'])
+})
+
+test('a hung ack_nudges leaves the ids pending without backing off, and later batches wait', async ($, on) => {
+  const many = Array.from({ length: 250 }, (_, i) => hosted(`n${i}`))
+  const { clock, shown, calls } = world(on, NOW, { polls: [poll(many.slice(0, 150)), poll([])], hang: 'ack' })
+  await start($)
+  await clock.settle()
+  expect(shown.toasts.length).toBe(100)
+  await clock.advance(30_000)
+  expect(calls.acks.length).toBe(1)
+  await clock.advance(MINUTE)
+  expect(calls.polls.length).toBe(2)
+  expect(shown.toasts.length).toBe(100)
+})
+
+test('an ack_nudges isError result keeps the ids pending and stops later batches', async ($, on) => {
+  const many = Array.from({ length: 100 }, (_, i) => hosted(`n${i}`))
+  const old = Array.from({ length: 50 }, (_, i) => `old${i}`)
+  const bad: McpToolResult = { content: [{ type: 'text', text: 'no' }], isError: true }
+  const { clock, calls } = world(on, NOW, { polls: [poll(many), poll([])], acks: [bad, text({})] }, { cloudPending: old })
+  await start($)
+  await clock.settle()
+  expect(calls.acks.map(a => a.length)).toEqual([100])
+  await clock.advance(MINUTE)
+  await clock.settle()
+  expect(calls.acks.map(a => a.length)).toEqual([100, 100, 50])
+})
+
+test('one poll shows at most HOSTED_MAX nudges', async ($, on) => {
+  const many = Array.from({ length: 500 }, (_, i) => hosted(`n${i}`))
+  expect(parsePoll(poll(many))!.length).toBe(HOSTED_MAX)
+  const { clock, shown } = world(on, NOW, { polls: [poll(many)] })
+  await start($)
+  await clock.settle()
+  expect(shown.toasts.length).toBe(HOSTED_MAX)
+})
+
+test('clean makes bidi and zero-width characters spaces', () => {
+  expect(clean('a\u202eb\u200bc\u2066d', 40)).toBe('a b c d')
 })
 
 test('a connect that never answers times out, backs off, and local nudges keep firing', async ($, on) => {

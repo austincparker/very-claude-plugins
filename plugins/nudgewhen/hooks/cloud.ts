@@ -10,13 +10,16 @@ export const BACKOFF_MAX_MS = 15 * MINUTE
 export const SEEN_MS = 60 * MINUTE
 export const ACK_BATCH = 100
 export const CALL_TIMEOUT_MS = 30_000
+export const HOSTED_MAX = 100
+export const PENDING_MAX = 1000
+const ID_MAX = 200
 const SOURCE_MAX = 40
 const TEXT_MAX = 300
 
-/** `s` with control characters (ESC, newlines, C1) made spaces and its length capped, safe to print in the terminal UI. */
+/** `s` with control, bidi and zero-width characters (ESC, newlines, C1) made spaces and its length capped, safe to print in the terminal UI. */
 export function clean(s: string, max: number): string {
   // eslint-disable-next-line no-control-regex
-  const flat = s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim()
+  const flat = s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u00ad\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]+/g, ' ').trim()
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
 }
 
@@ -30,7 +33,7 @@ function hasNudges(v: unknown): v is { nudges: unknown } {
   return v !== null && typeof v === 'object' && !Array.isArray(v) && 'nudges' in v
 }
 
-/** The nudges in a `poll_nudges` result, malformed entries dropped; null when the result is an error or is not the expected JSON. */
+/** The first `HOSTED_MAX` nudges in a `poll_nudges` result, malformed entries dropped; null when the result is an error or is not the expected JSON. */
 export function parsePoll(result: McpToolResult): HostedNudge[] | null {
   if (result.isError) return null
   if (!Array.isArray(result.content)) return null
@@ -51,10 +54,12 @@ export function parsePoll(result: McpToolResult): HostedNudge[] | null {
         typeof n === 'object' &&
         typeof n.id === 'string' &&
         n.id !== '' &&
+        n.id.length <= ID_MAX &&
         typeof n.source === 'string' &&
         typeof n.text === 'string' &&
         typeof n.due === 'number',
     )
+    .slice(0, HOSTED_MAX)
     .map(n => ({ ...n, source: clean(n.source, SOURCE_MAX), text: clean(n.text, TEXT_MAX) }))
 }
 
@@ -75,5 +80,5 @@ export function readSeen(v: unknown, now: number): Seen[] {
 }
 
 export function readIds(v: unknown): string[] {
-  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(-PENDING_MAX) : []
 }
