@@ -472,6 +472,11 @@ def run_all() -> list[str]:
         flagged = {f["message"].split("`")[1] for f in json.loads(r.stdout)}
         check("a function passed by reference is not dead", "handler" not in flagged, r.stdout)
         check("a prose mention does not hide dead code", "orphan" in flagged, r.stdout)
+        write(root, "g.py", "def ghost(x):\n    \"\"\"Wraps ghost().\"\"\"\n    return x  # ghost() again\n\n"
+                            "# ghost() is gone\n")
+        r = run(root / "g.py", "--only", mod.DEAD_SCAFFOLDING, "--json")
+        flagged = {f["message"].split("`")[1] for f in json.loads(r.stdout)}
+        check("a name in a comment or docstring does not hide dead code", "ghost" in flagged, r.stdout)
 
     # ─────────────────────────────────────────────────────────────────────
     # doc claims: what is not a path claim, and path scoping

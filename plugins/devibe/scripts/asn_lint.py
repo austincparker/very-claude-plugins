@@ -470,6 +470,46 @@ def find_shadow_pairs(all_defs: list[tuple[str, int, str]]) -> list[tuple]:
     return out
 
 
+def strip_comments_and_docstrings(text: str, suffix: str) -> str:
+    """Code with comments and docstrings blanked, so a name mentioned only in
+    narration does not count as a use."""
+    if suffix == ".py":
+        import ast
+        import io
+        import tokenize
+        try:
+            drop = set()
+            for node in ast.walk(ast.parse(text)):
+                if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                     ast.AsyncFunctionDef)) and node.body:
+                    first = node.body[0]
+                    if (isinstance(first, ast.Expr)
+                            and isinstance(first.value, ast.Constant)
+                            and isinstance(first.value.value, str)):
+                        drop.add((first.lineno, first.end_lineno))
+            lines = text.splitlines()
+            for start, end in drop:
+                for i in range(start - 1, end):
+                    lines[i] = ""
+            text = "\n".join(lines)
+            out = []
+            for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+                if tok.type != tokenize.COMMENT:
+                    out.append(tok.string)
+                else:
+                    out.append("")
+                out.append(" ")
+            return " ".join(out)
+        except (SyntaxError, tokenize.TokenError, ValueError, IndentationError):
+            pass
+    kept = []
+    for line in text.splitlines():
+        if _HASH_RE.match(line) or _SLASH_RE.match(line):
+            continue
+        kept.append(re.sub(r"\s(?:#|//)\s.*$", "", line))
+    return "\n".join(kept)
+
+
 def find_dead_scaffolding(
     all_defs: list[tuple[str, int, str]], corpus: str
 ) -> list[tuple[str, int, str]]:
@@ -668,6 +708,7 @@ def lint(paths: list[str], root: str | None = None, only: set | None = None) -> 
     per_file_text: dict[Path, str] = {}
     all_defs: list[tuple[str, int, str]] = []
     corpus_parts: list[str] = []
+    code_parts: list[str] = []
 
     for f in files:
         try:
@@ -679,10 +720,12 @@ def lint(paths: list[str], root: str | None = None, only: set | None = None) -> 
         per_file_lines[f] = lines
         if f.suffix != ".md":
             corpus_parts.append(text)
+            code_parts.append(strip_comments_and_docstrings(text, f.suffix))
             for ln, name in find_func_defs(lines):
                 all_defs.append((str(f), ln, name))
 
     corpus = "\n".join(corpus_parts)
+    code_only = "\n".join(code_parts)
     # Every file under the root, not only the ones this linter parses: a doc
     # legitimately names a .json profile or a .yml workflow, and neither is
     # scanned, so a scanned-only set reports them as absent.
@@ -759,7 +802,7 @@ def lint(paths: list[str], root: str | None = None, only: set | None = None) -> 
             ))
 
     if DEAD_SCAFFOLDING in only:
-        for f, ln, name in find_dead_scaffolding(all_defs, corpus):
+        for f, ln, name in find_dead_scaffolding(all_defs, code_only):
             findings.append(Finding(
                 f, ln, DEAD_SCAFFOLDING,
                 f"`{name}` has no call site anywhere in the scanned set",
