@@ -97,6 +97,40 @@ class TestHook(unittest.TestCase):
                 p = run_hook(raw)
                 self.assertEqual((p.returncode, p.stdout.strip()), (0, ""))
 
+    def test_a_repeated_snippet_maps_to_every_copy(self):
+        dup = "# Removed the cache because it went stale.\n"
+        path = self.write("x = 1\n" + dup + "y = 2\n" + dup)
+        p = run_hook({"tool_name": "Edit", "tool_input": {
+            "file_path": path, "new_string": dup.strip(), "replace_all": True}})
+        ctx = context(p)
+        self.assertIn("L2", ctx)
+        self.assertIn("L4", ctx)
+
+    def test_a_pure_deletion_reports_nothing(self):
+        path = self.write(TOMBSTONE + "x = 1\n")
+        p = run_hook({"tool_name": "Edit", "tool_input": {"file_path": path, "new_string": ""}})
+        self.assertIsNone(context(p))
+
+    def test_a_line_appended_to_an_existing_block_is_reported(self):
+        path = self.write("# Caches the page.\n# Removed the old retry.\nx = 1\n")
+        p = run_hook({"tool_name": "Edit", "tool_input": {
+            "file_path": path, "new_string": "# Removed the old retry."}})
+        self.assertIn("tombstone-narration", context(p))
+
+    def test_a_path_that_looks_like_an_option_is_linted_as_a_path(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: [os.unlink(os.path.join(d, f)) for f in os.listdir(d)] and os.rmdir(d))
+        path = os.path.join(d, "--only=x.py")
+        with open(path, "w") as f:
+            f.write(TOMBSTONE)
+        old = os.getcwd()
+        os.chdir(d)
+        try:
+            p = run_hook({"tool_name": "Write", "tool_input": {"file_path": "--only=x.py", "content": TOMBSTONE}})
+        finally:
+            os.chdir(old)
+        self.assertIn("tombstone-narration", context(p))
+
     def test_skipped_suffixes_are_silent(self):
         path = self.write(TOMBSTONE, name="data.min.js")
         p = run_hook({"tool_name": "Write", "tool_input": {"file_path": path, "content": TOMBSTONE}})
@@ -125,7 +159,7 @@ class TestHookStaysInStepWithTheLinter(unittest.TestCase):
         with open(HOOKS_JSON, encoding="utf-8") as fh:
             spec = json.load(fh)
         matcher = spec["hooks"]["PostToolUse"][0]["matcher"]
-        self.assertEqual(set(matcher.split("|")), {"Write", "Edit", "MultiEdit"})
+        self.assertEqual(matcher, "^(?:Write|Edit|MultiEdit)$")
 
 
 if __name__ == "__main__":

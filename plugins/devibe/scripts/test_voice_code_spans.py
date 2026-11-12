@@ -237,6 +237,74 @@ class Cli(Base):
         masked, restored = self.round_trip(text)
         self.assertEqual(restored, text)
 
+    def test_fence_inside_a_list_item_is_masked(self):
+        text = "- step\n\n    ```\n    a &amp; b\n    ```\n\n- next\n"
+        masked = self.round_trip(text)
+        self.assertNotIn("&amp;", masked)
+
+    def test_out_cannot_overwrite_the_draft(self):
+        draft = self.put("draft.md", "text `x`\n")
+        rc, _, err = run("mask", str(draft), "--out", str(draft), "--execute")
+        self.assertEqual(rc, 2, err)
+        self.assertEqual(draft.read_text(), "text `x`\n")
+
+    def test_spans_and_out_must_differ(self):
+        draft = self.put("draft.md", "text\n")
+        same = self.dir / "same.json"
+        rc, _, _ = run("mask", str(draft), "--out", str(same), "--spans", str(same), "--execute")
+        self.assertEqual(rc, 2)
+
+    def test_overrides_are_honored(self):
+        draft = self.put("draft.md", "a `x` b\n")
+        out, spans = self.dir / "m.txt", self.dir / "s.json"
+        rc, _, err = run("mask", str(draft), "--out", str(out), "--spans", str(spans), "--execute")
+        self.assertEqual(rc, 0, err)
+        rewrite = self.put("rw.md", out.read_text())
+        restored = self.dir / "r.txt"
+        rc, _, err = run("restore", str(rewrite), "--spans", str(spans), "--out", str(restored), "--execute")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(restored.read_text(), "a `x` b\n")
+
+    def test_malformed_spans_exit_two(self):
+        rewrite = self.put("rw.md", "text\n")
+        for body in ('{"salt": "ab", "spans": [{"id": "x"}]}', '{"salt": 1, "spans": []}',
+                     '{"salt": "ab", "spans": [3]}', "not json"):
+            spans = self.put("s.json", body)
+            rc, _, _ = run("restore", str(rewrite), "--spans", str(spans), "--execute")
+            self.assertEqual(rc, 2, body)
+
+    def test_a_failed_restore_leaves_no_stale_output(self):
+        masked, spans, _ = self.mask("a `x` b\n")
+        rc, restored, _ = self.restore(masked, spans)
+        self.assertEqual(rc, 0)
+        rc, _, _ = self.restore("placeholder dropped\n", spans)
+        self.assertEqual(rc, 1)
+        self.assertFalse((self.dir / "rewrite.md.restored.md").exists())
+
+    def test_a_lowercase_copy_of_a_placeholder_is_refused(self):
+        masked, spans, _ = self.mask("a `x` b\n")
+        rc, _, err = self.restore(masked + masked.lower(), spans)
+        self.assertEqual(rc, 1, err)
+
+    def test_a_write_failure_exits_two(self):
+        draft = self.put("draft.md", "a\n")
+        rc, _, _ = run("mask", str(draft), "--out", str(self.dir / "missing" / "m.md"), "--execute")
+        self.assertEqual(rc, 2)
+
+    def test_the_salt_widens_when_the_prefix_is_taken(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("code_spans", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        class FixedDigest:
+            def hexdigest(self):
+                return "abcdef0123456789"
+
+        mod.hashlib = type("H", (), {"sha1": staticmethod(lambda b: FixedDigest())})
+        self.assertEqual(mod.pick_salt("plain"), "abcd")
+        self.assertEqual(mod.pick_salt("has " + mod.PREFIX + "abcd inside"), "abcde")
+
     def test_help_documents_exit_codes(self):
         rc, out, _ = run("--help")
         self.assertEqual(rc, 0)

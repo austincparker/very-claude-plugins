@@ -159,6 +159,11 @@ def run_all() -> list:
     flags("a before a vowel", "This is a error.\n", "a/an")
     clean("a before u, eu and one", "A user, a euro and a one-off.\n")
     clean("url is not prose", "See https://example.com/a--b/colour for details.\n")
+    clean("a letter is not the article", "Option A is fine and the Q&A answers it.\n")
+    flags("a before a vowel after u", "This is a unexpected result.\n", "a/an")
+    flags("a capital A opening a line", "A error occurred.\n", "a/an")
+    flags("analyse hint", "We analyse it.\n", "'analyse' -> analyze")
+    flags("dialogue", "The dialogue box opened.\n", "dialog")
 
     return list(failures)
 

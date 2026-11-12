@@ -26,6 +26,8 @@ import json
 import subprocess
 import sys
 import tempfile
+import textwrap
+import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent / "asn_lint.py"
@@ -134,7 +136,7 @@ def run_all() -> list[str]:
     def write(root: Path, rel: str, content: str) -> Path:
         p = root / rel
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content)
+        p.write_text(textwrap.dedent(content))
         return p
 
 
@@ -360,6 +362,21 @@ def run_all() -> list[str]:
     ]:
         got = mod.classify_narration(text)
         check(f"held-out not DELETE: {text[:48]!r}", got != "DELETE", f"got {got!r}")
+    # A modal in one clause must not mask a backward verb in another, and a
+    # backward word before the modal is still a forward constraint.
+    for text in [
+        "We don't need the cache anymore, so we removed it.",
+        "Don't worry, we removed the debounce.",
+    ]:
+        got = mod.classify_narration(text)
+        check(f"held-out DELETE across clauses: {text[:48]!r}", got == "DELETE", f"got {got!r}")
+    for text in [
+        "Note: the deprecated flag must never be used.",
+        "Never call this after init, or pending items are silently dropped.",
+        "Must stay above 300ms; events are dropped below that.",
+    ]:
+        got = mod.classify_narration(text)
+        check(f"held-out KEEP: {text[:48]!r}", got == "KEEP", f"got {got!r}")
 
     # ─────────────────────────────────────────────────────────────────────
     # tombstone-narration end to end, and comment block states
@@ -421,6 +438,26 @@ def run_all() -> list[str]:
         check("a symlinked file is not followed",
               "link.py" not in r.stdout and "secret" not in r.stdout, r.stdout)
 
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        write(root, "k.py", '''
+            def f():
+                # required = True
+                # name = "x"
+                return 1
+        ''')
+        r = run(root / "k.py", "--only", mod.COMMENTED_OUT_CODE, "--json")
+        check("disabled assignments carrying a forward word are flagged",
+              mod.COMMENTED_OUT_CODE in r.stdout, r.stdout)
+        write(root, "k2.py", "# Must stay above 300ms;\nx = 1\n")
+        r = run(root / "k2.py", "--only", mod.COMMENTED_OUT_CODE, "--json")
+        check("a forward-looking constraint is not disabled code",
+              r.returncode == 0, r.stdout)
+        write(root, "k3.py", "# Cache note.\n# Removed the old cache.\nx = 1\n")
+        r = run(root / "k3.py", "--only", mod.TOMBSTONE_NARRATION, "--json")
+        f = json.loads(r.stdout)[0]
+        check("a finding carries the end line of its block", (f["line"], f["end_line"]) == (1, 2), r.stdout)
+
     # ─────────────────────────────────────────────────────────────────────
     # dead scaffolding: a reference is a use
     # ─────────────────────────────────────────────────────────────────────
@@ -454,6 +491,19 @@ def run_all() -> list[str]:
 
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
+        write(root, "src/a.py", "def real(): pass\n")
+        write(root, "README.md", (
+            "Paths: `~/.claude/CLAUDE.md`, `$CLAUDE_PLUGIN_ROOT/hooks/x.py`,\n"
+            "`file.py:12`, `#anchor`, `application/json`, `origin/main`, `owner/repo`,\n"
+            "`read/write`, `I/O`, `print()`, `setTimeout()`. Gone: `src/missing`.\n"
+        ))
+        r = run(root, "--root", root, "--only", mod.DOC_CLAIM_CONTRADICTED, "--json")
+        missing = {f["message"].split("`")[1] for f in json.loads(r.stdout)}
+        check("shell-shaped tokens, MIME types and builtins are not claims",
+              missing == {"src/missing"}, r.stdout)
+
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
         write(root, "README.md", "Call `anything()` here.\n")
         r = run(root / "README.md", "--root", root, "--only",
                 mod.DOC_CLAIM_CONTRADICTED, "--json")
@@ -484,6 +534,13 @@ def run_all() -> list[str]:
 
 def test_asn_lint():
     assert run_all() == []
+
+
+class TestAsnLint(unittest.TestCase):
+    """Lets `python3 -m unittest` run the checks as well as pytest."""
+
+    def test_all_checks_pass(self):
+        self.assertEqual(run_all(), [])
 
 
 if __name__ == "__main__":

@@ -250,12 +250,15 @@ class TestHookMatcherTracksTheGate(unittest.TestCase):
     _PRE = json.load(open(os.path.join(HOOKS, "hooks.json")))["hooks"]["PreToolUse"]
     MATCHER = _PRE[0]["matcher"]
     PROMPT_MATCHER = _PRE[1]["matcher"]
-    GMAIL_BRANCH = re.compile(r"\|claude_ai_Gmail__\(\?:[^)]*\)")
+    GMAIL_BRANCH = re.compile(r"\|\\w\*\(\?:Gmail\|gmail\)\\w\*__\(\?:[^)]*\)")
 
     JUDGED = (
         "mcp__claude_ai_Gmail__send_message",
         "mcp__github__add_issue_comment",
         "mcp__github__issue_write",
+        "mcp__github__create_issue",
+        "mcp__plugin_dev_github__add_issue_comment",
+        "mcp__claude_ai_GitHub_MCP__issue_write",
     )
     # The first three are prefix-extensions of gated names. They are the shapes an
     # unanchored alternation lets through, and a fixture of merely-distinct names
@@ -577,10 +580,10 @@ class TestPromptHookAnswersInThePromptShape(unittest.TestCase):
                 self.assertIn("$ARGUMENTS", h["prompt"])
                 self.assertNotIn("$TOOL_INPUT", h["prompt"])
 
-    def test_a_denial_returns_to_claude(self):
+    def test_each_prompt_hook_carries_only_documented_keys(self):
         for h in self.prompt_hooks():
             with self.subTest(prompt=h["prompt"][:60]):
-                self.assertIs(h.get("continueOnBlock"), True)
+                self.assertLessEqual(set(h), {"type", "prompt", "timeout", "model"})
 
 
 class TestEndToEnd(unittest.TestCase):
@@ -849,6 +852,195 @@ class TestBuildRulesBranches(unittest.TestCase):
             self.assertNotIn("spelling", fire(f"The {word} grew."), word)
         for word in ("organise", "organisation", "analysed"):
             self.assertIn("spelling", fire(f"We {word} it."), word)
+
+
+class TestGateCoverage(unittest.TestCase):
+    """Each case is a publishing shape that must be judged, or a shape that must
+    not be."""
+
+    def blobs(self, cmd, cwd=None):
+        return voice_gate.prose_blobs("Bash", {"command": cmd}, cwd)
+
+    def found(self, cmd, cwd=None):
+        return [f for b in self.blobs(cmd, cwd) for f in voice_gate.detect(b, RULES)]
+
+    def test_graphql_mutation_prose_is_judged(self):
+        cmd = ("gh api graphql -f query='mutation { addComment(input: "
+               "{subjectId: \"x\", body: \"" + TELL + "\"}) { clientMutationId } }'")
+        self.assertTrue(self.found(cmd))
+
+    def test_graphql_review_thread_resolve_is_exempt(self):
+        cmd = "gh api graphql -f query='mutation { resolveReviewThread(input:{threadId:\"x\"}) { thread { id } } }'"
+        self.assertEqual(self.blobs(cmd), [])
+
+    def test_input_file_json_is_read_and_judged(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "payload.json")
+            with open(path, "w") as fh:
+                json.dump({"body": TELL}, fh)
+            cmd = f"gh api -X POST repos/o/r/issues/1/comments --input {path}"
+            self.assertTrue(self.found(cmd))
+
+    def test_input_alone_gates_the_call(self):
+        self.assertTrue(voice_gate.gh_api_write("gh api repos/o/r/issues --input missing.json"))
+
+    def test_input_into_a_pull_request_path_is_exempt(self):
+        self.assertFalse(voice_gate.gh_api_write("gh api -X POST repos/o/r/pulls/1/comments --input x.json"))
+
+    def test_curl_data_file_to_discord_is_read(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "m.json")
+            with open(path, "w") as fh:
+                json.dump({"content": TELL}, fh)
+            self.assertTrue(self.found(f"curl -X POST https://discord.com/api/webhooks/1/x -d @{path}"))
+
+    def test_capitalised_and_compound_keys_are_judged(self):
+        for key in ("Body", "commentBody", "issue_body"):
+            self.assertTrue(self.found(f'gh api -X POST repos/o/r/issues/1/comments -f {key}="{TELL}"'), key)
+
+    def test_second_field_is_judged_beside_a_clean_title(self):
+        cmd = f'gh api -X POST repos/o/r/issues -f title=x -f issue_body="{TELL}"'
+        self.assertTrue(self.found(cmd))
+
+    def test_double_quoted_whole_field_is_judged(self):
+        self.assertTrue(self.found(f'gh api -X POST repos/o/r/issues/1/comments -f "body={TELL}"'))
+        self.assertTrue(self.found(f'curl -X POST https://discord.com/api/webhooks/1/x --form "content={TELL}"'))
+
+    def test_unresolvable_stdin_falls_back_to_the_command(self):
+        cmd = f'gh issue comment 1 --title t --body-file - <<< "{TELL}"'
+        self.assertTrue(self.found(cmd))
+
+    def test_tilde_cat_pipe_reads_the_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            old = os.environ.get("HOME")
+            os.environ["HOME"] = d
+            try:
+                with open(os.path.join(d, "draft.md"), "w") as fh:
+                    fh.write(TELL)
+                self.assertTrue(self.found("cat ~/draft.md | gh issue comment 1 -F -"))
+            finally:
+                if old is None:
+                    del os.environ["HOME"]
+                else:
+                    os.environ["HOME"] = old
+
+    def test_relative_body_file_resolves_against_the_payload_cwd(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "b.md"), "w") as fh:
+                fh.write(TELL)
+            self.assertTrue(self.found("gh issue create --title t --body-file b.md", cwd=d))
+
+    def test_a_file_the_command_writes_is_judged_as_the_command(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "b.md"), "w") as fh:
+                fh.write("clean old text")
+            cmd = f'printf "{TELL}" > b.md && gh issue create --title t --body-file b.md'
+            self.assertTrue(self.found(cmd, cwd=d))
+
+    def test_a_fifo_body_file_cannot_hang_the_gate(self):
+        with tempfile.TemporaryDirectory() as d:
+            fifo = os.path.join(d, "f")
+            os.mkfifo(fifo)
+            t0 = time.time()
+            self.blobs(f"gh issue create --title t --body-file {fifo}")
+            self.assertLess(time.time() - t0, 2.0)
+
+    def test_substituted_body_is_read(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "b.md")
+            with open(path, "w") as fh:
+                fh.write(TELL)
+            self.assertTrue(self.found(f'gh issue comment 1 --body "$(cat {path})"'))
+
+    def test_an_inch_mark_does_not_blank_a_later_tell(self):
+        self.assertTrue(self.found(f'gh issue comment 1 --body "a 5\\" board. {TELL}"'))
+        self.assertIn("paired dashes", fire('The 5" board holds. ' + TELL))
+
+    def test_unterminated_heredocs_stay_linear(self):
+        cmd = "gh issue comment 1 --body-file - " + "<<a\n" * 20000
+        t0 = time.time()
+        self.blobs(cmd)
+        self.assertLess(time.time() - t0, 2.0)
+
+    def test_mcp_prose_skips_context_and_content_type(self):
+        payload = {"context": TELL, "contentType": TELL, "body": "ok", "lines": []}
+        self.assertEqual(voice_gate.mcp_prose(payload), ["ok"])
+
+    def test_mcp_prose_reads_a_list_of_strings(self):
+        self.assertEqual(voice_gate.mcp_prose({"comments": ["a", "b"]}), ["a", "b"])
+
+    def test_edit_and_notebook_prose_paths_are_judged(self):
+        voice_gate.register_local(prose_frontmatter_types=["email-draft"])
+        try:
+            fm = "---\ntype: email-draft\n---\n" + TELL
+            self.assertTrue(voice_gate.prose_blobs("Edit", {"file_path": "/x", "new_string": fm}))
+            self.assertTrue(voice_gate.prose_blobs("NotebookEdit", {"new_source": fm}))
+            self.assertTrue(voice_gate.prose_blobs("MultiEdit", {"edits": [{"new_string": fm}, "junk"]}))
+            with tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "a.md")
+                with open(path, "w") as fh:
+                    fh.write("---\ntype: email-draft\n---\nold")
+                self.assertTrue(voice_gate.prose_blobs("Edit", {"file_path": path, "new_string": TELL}))
+        finally:
+            voice_gate._LOCAL["prose_frontmatter_types"].clear()
+
+    def test_frontmatter_types_are_regex_escaped(self):
+        voice_gate.register_local(prose_frontmatter_types=["a.b"])
+        try:
+            self.assertEqual(voice_gate.prose_blobs("Write", {"content": "---\ntype: axb\n---\n" + TELL}), [])
+        finally:
+            voice_gate._LOCAL["prose_frontmatter_types"].clear()
+
+    def test_request_and_method_spellings_gate(self):
+        for flag in ("--request POST", "--method=PATCH", "-XPUT"):
+            self.assertTrue(voice_gate.gh_api_write(f'gh api {flag} repos/o/r/issues/1 -f body=x'), flag)
+
+    def test_repositories_pulls_path_is_exempt(self):
+        self.assertFalse(voice_gate.gh_api_write('gh api -X POST repositories/12/pulls/3/comments -f body=x'))
+
+    def test_pipe_ampersand_and_dash_heredoc_separators(self):
+        self.assertTrue(voice_gate.gh_api_write('echo hi |& gh api -X POST repos/o/r/issues -f body=x'))
+        cmd = 'cat <<-EOT\n\tx\n\tEOT\ngh api -X POST repos/o/r/issues -f body=x'
+        self.assertTrue(voice_gate.gh_api_write(cmd))
+
+    def test_unbalanced_quote_falls_back_without_raising(self):
+        self.assertTrue(voice_gate.gh_api_write("gh api graphql -f query='mutation { addComment(input:{body:\"x\"}) {id} }"))
+
+    def test_inline_file_field_value_is_not_read_as_a_file(self):
+        self.assertTrue(self.blobs('gh api -X POST repos/o/r/issues -F body=plain'))
+
+    def test_read_cap_bounds_a_large_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "big.md")
+            with open(path, "w") as fh:
+                fh.write("word " * 100000)
+            text = voice_gate._read_prose_file(path)
+            self.assertEqual(len(text), voice_gate._READ_CAP)
+
+
+class TestShippedProfileCoverage(unittest.TestCase):
+    """Every shipped rule is asserted to fire, and the rejected list to stay quiet."""
+
+    PHRASES = ("worth noting", "landscape", "robust", "the fact that", "crucial")
+    SPELLINGS = ("behaviour", "organised", "analysed", "catalogue", "defence", "favourite",
+                 "realise", "recognise", "centre", "honour", "flavour", "neighbour",
+                 "apologise", "colour")
+
+    def test_every_phrase_fires(self):
+        pats = [p["pattern"] for p in PROFILE["phrases"]]
+        self.assertEqual(len(pats), len(self.PHRASES))
+        for phrase in self.PHRASES:
+            self.assertIn("phrase", fire(f"We say {phrase} here."), phrase)
+
+    def test_every_spelling_fires(self):
+        self.assertEqual(len(PROFILE["spellings"]["patterns"]), len(self.SPELLINGS))
+        for word in self.SPELLINGS:
+            self.assertIn("spelling", fire(f"The {word} is fine."), word)
+
+    def test_the_rejected_lists_do_not_fire(self):
+        for group in ("common_words", "rare_in_most_writing"):
+            for word in PROFILE["rejected"][group]:
+                self.assertEqual(fire(f"We say {word} here."), set(), word)
 
 
 if __name__ == "__main__":

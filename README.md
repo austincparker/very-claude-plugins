@@ -5,7 +5,7 @@ Free, open-source plugins for Claude Code.
 | Plugin | What it does |
 | --- | --- |
 | [nudgewhen](plugins/nudgewhen) | Nudges you to take breaks, go to bed, and anything else you ask for with `/nudge` or by asking Claude. |
-| [devibe](plugins/devibe) | Lints narrated deletions in code, rewrites outgoing prose, and gates prose that carries common machine tells. |
+| [devibe](plugins/devibe) | Lints narrated deletions in code, rewrites outgoing prose, and gates prose that carries common machine tells on publishing calls, shell commands and file writes. |
 
 ## Install
 

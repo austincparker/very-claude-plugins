@@ -25,12 +25,14 @@ import argparse
 import hashlib
 import json
 import bisect
+import os
 import pathlib
 import re
 import sys
 
 PREFIX = "VOICECODE"
-FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+LIST_ITEM = re.compile(r"^ *(?:[-*+]|\d{1,9}[.)])[ \t]")
+FENCE_OPEN = re.compile(r"^ *(`{3,}|~{3,})(.*)$")
 
 
 def fail(code, msg):
@@ -49,14 +51,19 @@ def split_fences(text):
     """Yield (is_fence, chunk) pieces that concatenate back to text."""
     lines = re.findall(r"[^\n]*\n|[^\n]+", text)
     pieces, prose, i = [], [], 0
+    in_list = False
     while i < len(lines):
         body = lines[i].rstrip("\r\n")
         m = FENCE_OPEN.match(body)
+        # A fence indented four or more spaces is indented code, unless it sits
+        # inside a list item.
+        if m and len(body) - len(body.lstrip(" ")) > 3 and not in_list:
+            m = None
         if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
             ch, n = m.group(1)[0], len(m.group(1))
             j = i + 1
             while j < len(lines):
-                c = re.match(r"^ {0,3}([`~]+)[ \t]*$", lines[j].rstrip("\r\n"))
+                c = re.match(r"^ *([`~]+)[ \t]*$", lines[j].rstrip("\r\n"))
                 if c and c.group(1)[0] == ch and len(c.group(1)) >= n and set(c.group(1)) == {ch}:
                     break
                 j += 1
@@ -73,6 +80,10 @@ def split_fences(text):
                 prose.append(tail)
             i = end + 1
         else:
+            if LIST_ITEM.match(body):
+                in_list = True
+            elif body.strip() and not body.startswith(" "):
+                in_list = False
             prose.append(lines[i])
             i += 1
     if prose:
@@ -169,6 +180,29 @@ def write(path, content):
         fail(2, f"cannot write {path}: {e.__class__.__name__}")
 
 
+def distinct(*paths):
+    """Refuse a write target that is also an input or another target."""
+    real = [os.path.realpath(p) for p in paths]
+    if len(set(real)) != len(real):
+        fail(2, "input and output paths must all differ")
+
+
+def load_spans(path):
+    """The spans file, validated: a list of {id, text} strings and a salt."""
+    try:
+        data = json.loads(read_text(path))
+        spans, salt = data["spans"], data["salt"]
+        ok = isinstance(salt, str) and isinstance(spans, list) and all(
+            isinstance(s, dict) and isinstance(s.get("id"), str) and isinstance(s.get("text"), str)
+            for s in spans
+        )
+    except (ValueError, KeyError, TypeError):
+        ok = False
+    if not ok:
+        fail(2, f"cannot parse spans file {path}")
+    return data
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="verb", required=True)
@@ -188,18 +222,20 @@ def main(argv=None):
         masked, data = mask(read_text(a.draft))
         out = a.out or a.draft + ".masked.md"
         spans = a.spans or a.draft + ".spans.json"
+        distinct(a.draft, out, spans)
         if a.execute:
             write(out, masked)
             write(spans, json.dumps(data, ensure_ascii=False, indent=1))
         print(json.dumps({"masked": out, "spans": spans, "count": len(data["spans"]), "executed": a.execute}))
     else:
-        try:
-            data = json.loads(read_text(a.spans))
-            data["spans"], data["salt"]
-        except (ValueError, KeyError, TypeError):
-            fail(2, f"cannot parse spans file {a.spans}")
-        restored = restore(read_text(a.rewrite), data)
+        data = load_spans(a.spans)
         out = a.out or a.rewrite + ".restored.md"
+        distinct(a.rewrite, a.spans, out)
+        text = read_text(a.rewrite)
+        if a.execute:
+            # A failed restore must not leave an earlier run's output behind.
+            pathlib.Path(out).unlink(missing_ok=True)
+        restored = restore(text, data)
         if a.execute:
             write(out, restored)
         print(json.dumps({"restored": out, "count": len(data["spans"]), "executed": a.execute}))

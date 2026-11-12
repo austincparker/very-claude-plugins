@@ -50,6 +50,7 @@ Exit 0: no findings. Exit 1: findings reported. Exit 2: usage error.
 from __future__ import annotations
 
 import argparse
+import builtins
 import json
 import os
 import re
@@ -94,6 +95,7 @@ class Finding:
     category: str
     message: str
     snippet: str = ""
+    end_line: int = 0
 
     def render(self) -> str:
         loc = f"{self.file}:{self.line}"
@@ -132,13 +134,21 @@ _BACKWARD_PATTERNS = [
 # future edit, so they must not count as narration: a negated or modal clause
 # ("must never be deleted"), the passive infinitive "is used to <verb>", and a
 # leading participle used as an adjective ("removed items are skipped").
+_BACKWARD_VERBS = r"(?:removed|deleted|dropped|renamed|replaced|retired|deprecated)"
 _NEUTRAL_PATTERNS = [
+    # A modal binds the verb only through a short run of auxiliaries and adverbs
+    # ("must never be deleted"); a comma or another clause ends the binding, so
+    # "we don't need it anymore, so we removed it" is still narration.
     r"\b(?:must|should|shall|never|cannot|can't|do not|don't|does not|may not|"
-    r"will not|won't)\b[^.;]{0,40}?\b(?:removed|deleted|dropped|renamed|replaced|"
-    r"retired|deprecated)\b",
+    r"will not|won't)(?:\s+(?:never|not|ever|always|be|been|get|gets|ever|silently)){0,3}"
+    r"\s+" + _BACKWARD_VERBS + r"\b",
+    # Present-tense passive describes live behavior ("pending items are silently dropped").
+    r"\b(?:is|are|will be|gets?)\s+(?:\w+ly\s+)?(?:removed|deleted|dropped)\b",
     r"\b(?:is|are|be|being|been|gets?|got)\s+used to\b",
     r"^\s*(?:removed|deleted|dropped)\s+\w+s\s+(?:are|is|will|get|must|can)\b",
-    r"\b(?:the|a|an|any|all|each|every|no)\s+(?:removed|deleted|dropped)\s+\w+",
+    # A backward word used as an adjective after a determiner.
+    r"\b(?:the|a|an|any|all|each|every|no|this|that|these|those)\s+"
+    r"(?:removed|deleted|dropped|deprecated|retired|renamed|obsolete|superseded)\s+\w+",
 ]
 _NEUTRAL_RE = re.compile("|".join(_NEUTRAL_PATTERNS), re.I)
 
@@ -310,23 +320,31 @@ def is_code_like_line(text: str) -> bool:
     return False
 
 
-def find_commented_out_code(blocks: list[CommentBlock]) -> list[tuple[int, str]]:
-    """Returns (line, snippet) for comment blocks whose lines are
+def _is_assignment_line(text: str) -> bool:
+    return bool(_ASSIGN_RE.match(text.strip()))
+
+
+def find_commented_out_code(blocks: list[CommentBlock]) -> list[tuple[int, str, int]]:
+    """Returns (line, snippet, end line) for comment blocks whose lines are
     predominantly code-shaped rather than prose. Only blocks that
     `classify_narration` did not already claim -- a narration comment that
     happens to mention `foo()` is still narration, not a dead-code stash.
     """
     out = []
     for b in blocks:
-        if classify_narration(b.text) is not None:
+        verdict = classify_narration(b.text)
+        if verdict == "DELETE":
             continue
-        code_lines = [ln for ln in b.stripped_lines if is_code_like_line(ln)]
+        # A block that binds a future edit stays unless its lines are assignments:
+        # `# required = True` is disabled code, `# Must stay above 300ms;` is not.
+        is_code = _is_assignment_line if verdict == "KEEP" else is_code_like_line
+        code_lines = [ln for ln in b.stripped_lines if is_code(ln)]
         if len(b.stripped_lines) >= 2 and len(code_lines) >= 2 and \
                 len(code_lines) / len(b.stripped_lines) >= 0.6:
-            out.append((b.start_line, b.stripped_lines[0][:80]))
-        elif len(b.stripped_lines) == 1 and code_lines and \
+            out.append((b.start_line, b.stripped_lines[0][:80], b.end_line))
+        elif len(b.stripped_lines) == 1 and code_lines and verdict is None and \
                 _CODE_TAIL_RE.search(code_lines[0]):
-            out.append((b.start_line, code_lines[0][:80]))
+            out.append((b.start_line, code_lines[0][:80], b.end_line))
     return out
 
 
@@ -509,6 +527,15 @@ _FILE_EXTS = frozenset(TEXT_EXTS | {
 
 # The tree walk does not descend into these, so a claim naming a path inside one
 # is checked against the disk directly instead of the walked set.
+_MIME_TYPES = frozenset({"application", "text", "image", "audio", "video", "multipart", "font", "message"})
+
+# Calls every language provides; a doc naming one claims nothing about this tree.
+_BUILTIN_CALLS = frozenset(dir(builtins)) | frozenset({
+    "setTimeout", "setInterval", "clearTimeout", "clearInterval", "parseInt",
+    "parseFloat", "require", "fetch", "alert", "isNaN", "eval", "String",
+    "Number", "Boolean", "Array", "Object", "Promise", "Symbol", "Date",
+})
+
 _TREE_SKIP_DIRS = frozenset({".git", ".claude", "node_modules", "__pycache__", ".venv"})
 
 
@@ -530,7 +557,21 @@ def find_doc_claim_contradictions(
                 continue
             if tok.startswith("/") and tok.split("/")[1] in _SYSTEM_ROOTS:
                 continue
+            # Home and variable paths name the reader's machine, and `file:12`,
+            # `#anchor` and `application/json` are not repo paths.
+            if tok.startswith(("~", "$")) or "#" in tok or ":" in tok:
+                continue
+            if tok.split("/")[0].lower() in _MIME_TYPES and tok.count("/") == 1:
+                continue
             suffix = Path(tok).suffix
+            # A slashed word with no extension and no trailing slash (`origin/main`,
+            # `read/write`, `I/O`) claims a path only when its first segment is a
+            # directory of this tree.
+            if ("/" in tok and not tok.endswith("/") and not suffix
+                    and not tok.startswith(("/", "."))):
+                top = tok.split("/")[0] + "/"
+                if top not in scanned and not (root / top).is_dir():
+                    continue
             if "/" in tok or (suffix and suffix.lower() in _FILE_EXTS):
                 def _rel(pth: Path) -> str | None:
                     try:
@@ -587,7 +628,7 @@ def find_doc_claim_contradictions(
                 # Only code this run scanned can back a call claim; with no code in
                 # the scan (or code in a language it does not parse) there is
                 # nothing to contradict it.
-                if (len(name) > 2 and code_corpus
+                if (len(name) > 2 and name not in _BUILTIN_CALLS and code_corpus
                         and not re.search(r"\b" + re.escape(name) + r"\b", code_corpus)):
                     out.append((i, f"doc references `{tok}` -- no matching "
                                     f"definition found in the scanned code"))
@@ -683,16 +724,16 @@ def lint(paths: list[str], root: str | None = None, only: set | None = None) -> 
                             rel, b.start_line, TOMBSTONE_NARRATION,
                             "backward-looking narration -- states what used to "
                             "be true rather than a constraint on what is here now",
-                            b.text[:100],
+                            b.text[:100], b.end_line,
                         ))
 
             if COMMENTED_OUT_CODE in only:
-                for ln, snippet in find_commented_out_code(blocks):
+                for ln, snippet, end in find_commented_out_code(blocks):
                     findings.append(Finding(
                         rel, ln, COMMENTED_OUT_CODE,
                         "comment block is code-shaped -- looks like disabled "
                         "code kept behind a comment marker",
-                        snippet,
+                        snippet, end,
                     ))
 
             if DOCSTRING_RESTATES_SIGNATURE in only:

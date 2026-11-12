@@ -2,7 +2,7 @@
 name: asn-lint
 posture: labor
 color: yellow
-allowed-tools: Read, Bash
+allowed-tools: Read, Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/asn_lint.py:*)
 description: "Use before a diff or a code file goes out the door: \"check for tombstone comments\", \"lint this for narrated deletions\", \"asn lint\", \"does this comment explain a deletion instead of just deleting\", \"check for dead-code scaffolding\", \"review this PR for backward-looking comments\", \"devibe this file\". Covers code files and README claims checked against the tree; for prose diagnosis (\"devibe this prose\") see `devibe:voice`."
 ---
 

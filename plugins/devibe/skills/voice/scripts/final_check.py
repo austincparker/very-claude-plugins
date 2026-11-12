@@ -33,8 +33,8 @@ URL = re.compile(r"https?://[^\s\"'<>]+")
 QUOTE = re.compile(r'"[^"\n]{1,200}"')
 
 # Masked text is filled with a character that is neither a word character nor
-# whitespace: filler letters made two adjacent same-length spans read as a
-# doubled word, and filler spaces read as space-before-punctuation.
+# whitespace, so two adjacent masked spans never read as a doubled word and
+# masked text never reads as space-before-punctuation.
 FILL = "#"
 
 
@@ -68,7 +68,7 @@ BRITISH = {
     "colour": "color", "colours": "colors", "coloured": "colored",
     "behaviour": "behavior", "behaviours": "behaviors",
     "organise": "organize", "organised": "organized", "organisation": "organization",
-    "analyse": "analyse -> analyze", "analysed": "analyzed",
+    "analyse": "analyze", "analysed": "analyzed",
     "licence": "license", "grey": "gray", "cancelled": "canceled",
     "catalogue": "catalog", "dialogue": "dialog (in UI contexts)",
     "defence": "defense", "towards": "toward",
@@ -76,6 +76,9 @@ BRITISH = {
 
 # Words that legitimately repeat in English. Without this, every "had had" and
 # every table cell boundary reads as a defect.
+# Words spelled with a vowel but pronounced with a consonant, so they take "a".
+_A_BEFORE_VOWEL = ("uni", "use", "usa", "usu", "uti", "ubi", "uro", "ufo", "uk", "eu", "one", "once")
+
 REPEAT_OK = {"had", "that", "no", "very", "so", "long", "far", "did", "is"}
 
 
@@ -100,11 +103,9 @@ def check(path: str) -> list[str]:
     if ascii_arrow and uni_arrow:
         out.append(f"  mixed arrows: {ascii_arrow} ascii '->' and {uni_arrow} unicode. Pick one.")
 
-    # ⚠ THE EM DASH FIRES ON ITS OWN, not only against a spaced hyphen.
-    # Requiring both meant prose written entirely in em dashes — the most likely
-    # way to get this wrong, and the way a machine drafts by default — passed as
-    # clean. Measured 2026-09-03: a 70-em-dash page cleared this check and
-    # published. House style is the spaced hyphen, so any em dash is the finding.
+    # The em dash fires on its own, not only beside a spaced hyphen: prose written
+    # entirely in em dashes must not pass. House style is the spaced hyphen, so
+    # any em dash is the finding.
     em, spaced = body.count("—"), len(re.findall(r"\s-\s", body))
     if em:
         mix = f" alongside {spaced} spaced hyphens" if spaced else ""
@@ -117,10 +118,12 @@ def check(path: str) -> list[str]:
         line = body[: m.start()].count("\n") + 1
         out.append(f"  space before punctuation ~L{line}")
 
-    for m in re.finditer(r"\ba\s+[aeiou]\w+", body, re.I):
+    # Lowercase `a` only, plus a capital `A` opening a line: "Option A is" and
+    # "Q&A answers" name a letter, not the article.
+    for m in re.finditer(r"(?:\ba|(?m:^)A)[ \t]+[aeiou]\w+", body):
         word = m.group(0).split()[-1].lower()
         # Vowel-letter words that take "a": a user, a unique, a one, a euro.
-        if word.startswith(("u", "eu", "one")):
+        if word.startswith(_A_BEFORE_VOWEL):
             continue
         line = body[: m.start()].count("\n") + 1
         out.append(f"  possible a/an ~L{line}: {m.group(0)!r}")

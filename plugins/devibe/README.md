@@ -21,8 +21,9 @@ Shapes 1, 6 and 7: skills, hooks and one agent that catch AI narration defects i
 ## Hooks
 
 - PostToolUse on Write, Edit and MultiEdit runs `hooks/asn_lint_hook.py`. It warns rather than denies: the classifier is keyword-based, so a deny would block correct edits. Only findings in lines the edit wrote are reported, and they reach the model as additional context.
-- PreToolUse on publishing calls (GitHub, Gmail) and `Bash` runs `hooks/voice_gate.py`, which denies prose carrying measured tells. Fix the quoted span and send the same call again. A routing prompt on non-email publishing calls catches prose that never got the voice pass.
-- `Bash` cannot be matched by tool name, so every Bash call pays one Python start (about 20 ms). Append `[no-prose]` to a command that carries none.
+- PreToolUse on publishing calls (any GitHub or Gmail MCP server), `Bash`, `Write`, `Edit`, `MultiEdit` and `NotebookEdit` runs `hooks/voice_gate.py`, which denies prose carrying measured tells. Fix the quoted span and send the same call again. A routing prompt on GitHub publishing calls catches prose that never got the voice pass.
+- `Bash` cannot be matched by what it runs, so every Bash call pays one Python start (about 20 ms). Append `[no-prose]` to a command that carries none. The file tools are judged only for frontmatter types registered with `register_local`; with none registered they pass without a read.
+- The matcher is `voice_gate.MCP_GATED` plus the shell and file tools; a test holds the two equal.
 
 ## The voice gate
 
@@ -36,6 +37,8 @@ Shapes 1, 6 and 7: skills, hooks and one agent that catch AI narration defects i
 
 - The gate catches measured tells, not meaning or register; clearing it is not a voice pass.
 - `dead-scaffolding` scopes to the paths you give it; point it at a package, not one file. `docstring-restates-signature` is Python only; `doc-claim-contradicted` checks only backticked paths and `foo()` calls.
+- `asn-lint` reads whole-line comments only; a trailing comment (`x = 1  # removed the retry`) is not checked.
+- The gate reads prose files named on the command line (`--body-file`, `-F`, `--input`, `-d @file`, a `cat` or `echo` piped into `-`) relative to the call's working directory. A file the same command writes, or a stdin source it cannot see, is judged as the command text instead.
 - Neither lint auto-fixes.
 
 ## Tests
