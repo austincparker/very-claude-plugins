@@ -24,6 +24,7 @@ export const USAGE = [
   '       /nudge snooze 30m | pause | pause until 14:30 | pause tomorrow | resume',
   '       /nudge bedtime 23:00 | wake 05:00 | hours 09:00-17:00 | days mon,tue | quiet 12:00-13:00',
   '       /nudge status | status sit,bed,hosted',
+  '       /nudge tone plain|vulgar | line add <kind> <text> | line list [kind] | line rm <n>',
   '       /nudge prefs | mute owner/repo | unmute owner/repo | failures-only on|off | kinds ci,pr_landed',
 ].join('\n')
 

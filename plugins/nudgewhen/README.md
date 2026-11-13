@@ -62,6 +62,26 @@ Each of these has a command that checks the value and saves it:
 | `/nudge days mon,tue,wed,thu,fri` | `work_days` (no argument clears it) |
 | `/nudge quiet 12:00-13:00` | `quiet_hours` (no argument clears it) |
 | `/nudge status model,cost,branch` | `status_segments` (no argument lists the current ones and every name) |
+| `/nudge tone vulgar` | `tone` |
+
+## Tone
+
+The `tone` setting is `plain` (the default, every text as it is) or `vulgar`. Under `vulgar`, each toast and notification says a random line for its kind, drawn from your own lines or, when you have none for it, a short crude starter set. Set it in `/config` or with `/nudge tone plain` or `/nudge tone vulgar`.
+
+Add your own lines with `/nudge line add <kind> <text>`, see them with `/nudge line list [kind]` and remove one with `/nudge line rm <n>` (the number from the full list). You can keep up to 200 lines of up to 200 characters each. A kind with no line of yours uses your `any` lines, then the starters.
+
+| Kind | Used for | Example line |
+| --- | --- | --- |
+| `break` | the break toast when an agent launches | `{minutes} minutes on your ass. Stand up.` |
+| `reminder` | your own `/nudge in`, `at` and `every` reminders | `Remember this, you forgetful bastard: {text}` |
+| `ci` | hosted CI nudges | `Pipeline shit the bed: {text}` |
+| `review` | hosted review requests and reviews | `Somebody wants your damn opinion: {text}` |
+| `landed` | hosted pull request landed nudges | `Merged. Fuck yeah: {text}` |
+| `any` | any kind with no line of its own | `Not to be a dick, but: {text}` |
+
+`{minutes}` is how long you have been sitting (in `break` lines) and `{text}` is the nudge's own text. A line with no `{text}` gets the nudge text added after ` - `. Sit, bed and wake lines are not kept: those show only in the status line.
+
+The status entry, `/nudge list` and the setup hints stay plain whatever the tone. Your lines stay on your machine and are never sent to the hosted server.
 
 ## Hosted controls
 

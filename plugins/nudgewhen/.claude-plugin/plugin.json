@@ -65,6 +65,12 @@
       "description": "No toasts or notifications in these hours; the status line still shows. A reminder that came due fires when they end. Empty means none.",
       "default": ""
     },
+    "tone": {
+      "type": "string",
+      "title": "Tone (plain or vulgar)",
+      "description": "plain keeps the usual wording. vulgar has toasts and notifications say a random crude line, yours from /nudge line add or the built-in starters. The status line stays plain.",
+      "default": "plain"
+    },
     "status_segments": {
       "type": "string",
       "title": "Status line segments",
