@@ -32,6 +32,8 @@ import {
   parsePrefs,
   prefsLines,
 } from './hosted'
+import { KINDS as LINE_KINDS, LINES_MAX, kindForSource, fill, parseLine, pickLine, readLines, readTone } from './lines'
+import type { Kind, Tone } from './lines'
 import { MINUTE, USAGE, afterFiring, clock, dayHint, describe, parseWhen, span } from './schedule'
 import type { Nudge } from './schedule'
 import {
@@ -56,7 +58,7 @@ import {
 import type { Free, Paid } from './status'
 import { SAMPLE_MS, isSampler, localStamp, num, readLog, readSit, report, satMinutes, step } from './sitting'
 
-type Config = { sitMin: number; awayMin: number; bedtime: boolean; controls: Controls; segments: string }
+type Config = { sitMin: number; awayMin: number; bedtime: boolean; controls: Controls; segments: string; tone: Tone }
 type Fired = { id: number; text: string; at: number }
 type Source = 'ioreg' | 'xprintidle' | 'prompts'
 
@@ -121,6 +123,7 @@ function config(options: PluginOptions): { cfg: Config; warnings: string[] } {
       bedtime: options.bedtime_nudge !== false,
       controls,
       segments: typeof options.status_segments === 'string' ? options.status_segments : DEFAULT_SEGMENTS,
+      tone: readTone(options.tone),
     },
     warnings: warnings.map(w => w.text),
   }
@@ -229,14 +232,21 @@ async function takeDue($: EngineInterface, now: number): Promise<Nudge[]> {
   return due
 }
 
+/** The line to show for `kind` under the vulgar tone, filled in; null under the plain tone, which keeps its own wording. */
+async function say($: EngineInterface, kind: Kind, vars: { minutes?: number; text?: string }): Promise<string | null> {
+  if (state.cfg.tone !== 'vulgar') return null
+  return fill(pickLine(readLines(await $.store.get('lines')), kind), vars)
+}
+
 async function fireDue($: EngineInterface) {
   const now = await $.clock.now()
   if (await isHeldNow($, now)) return
   const due = await locked(() => takeDue($, now))
   for (const n of due) {
     const late = now - n.due > 2 * MINUTE ? ` (due ${span(now - n.due)} ago)` : ''
-    $.ui.toast(`nudge: ${n.text}${late}`, { timeoutMs: 15_000 })
-    $.ui.notify(`${n.text}${late}`, { title: 'nudgewhen' }).catch(() => undefined)
+    const line = await say($, 'any', { text: `${n.text}${late}` })
+    $.ui.toast(line ?? `nudge: ${n.text}${late}`, { timeoutMs: 15_000 })
+    $.ui.notify(line ?? `${n.text}${late}`, { title: 'nudgewhen' }).catch(() => undefined)
   }
 }
 
@@ -345,8 +355,9 @@ async function pollCloud($: EngineInterface) {
     const { fresh, ack } = await settle($, got)
     if (!isLive()) return
     for (const n of fresh) {
-      $.ui.toast(`nudge (${n.source}): ${n.text}`, { timeoutMs: 15_000 })
-      $.ui.notify(n.text, { title: `nudgewhen - ${n.source}` }).catch(() => undefined)
+      const line = await say($, kindForSource(n.source), { text: n.text })
+      $.ui.toast(line ?? `nudge (${n.source}): ${n.text}`, { timeoutMs: 15_000 })
+      $.ui.notify(line ?? n.text, { title: `nudgewhen - ${n.source}` }).catch(() => undefined)
     }
     if (fresh.length > 0) await refreshStatus($)
     if (!('server' in got) || ack.length === 0) return
@@ -703,6 +714,48 @@ async function control($: EngineInterface, verb: string, arg: string, now: numbe
   }
 }
 
+async function toneCommand($: EngineInterface, arg: string): Promise<string> {
+  if (arg !== 'plain' && arg !== 'vulgar') return 'Usage: /nudge tone plain|vulgar'
+  return (await setting($, 'tone', arg)) ?? `Tone is now ${arg}.`
+}
+
+const LINE_USAGE = `Usage: /nudge line add <kind> <text> | line list [kind] | line rm <n>; kinds: ${LINE_KINDS.join(', ')}.`
+
+/** `/nudge line add|list|rm`: the person's own vulgar lines, kept in the store and never sent anywhere. */
+async function lineCommand($: EngineInterface, arg: string): Promise<string> {
+  const m = /^(add|list|ls|rm)(?:\s+([\s\S]*))?$/i.exec(arg)
+  const verb = m?.[1]?.toLowerCase()
+  const rest = (m?.[2] ?? '').trim()
+  if (verb === 'add') {
+    const line = parseLine(rest)
+    if (typeof line === 'string') return line.startsWith('Usage') ? `Usage: /nudge line add <kind> <text>; kinds: ${LINE_KINDS.join(', ')}.` : line
+    return locked(async () => {
+      const lines = readLines(await $.store.get('lines'))
+      if (lines.length >= LINES_MAX) return `You already have ${LINES_MAX} lines. Remove one with /nudge line rm <n>.`
+      await $.store.set('lines', [...lines, line])
+      return `Added line #${lines.length + 1} (${line.kind}).`
+    })
+  }
+  if (verb === 'list' || verb === 'ls') {
+    const kind = rest.toLowerCase()
+    if (kind !== '' && !(LINE_KINDS as readonly string[]).includes(kind)) return LINE_USAGE
+    const shown = readLines(await $.store.get('lines')).flatMap((l, i) => (kind === '' || l.kind === kind ? [`  #${i + 1}  ${l.kind}  ${l.text}`] : []))
+    return shown.length === 0 ? `No lines${kind === '' ? '' : ` for ${kind}`}. Add one with /nudge line add <kind> <text>.` : ['Lines:', ...shown].join('\n')
+  }
+  if (verb === 'rm') {
+    if (!/^\d+$/.test(rest)) return 'Usage: /nudge line rm <n>'
+    const n = Number(rest)
+    return locked(async () => {
+      const lines = readLines(await $.store.get('lines'))
+      const hit = lines[n - 1]
+      if (hit === undefined) return `No line #${n}. /nudge line list shows them.`
+      await $.store.set('lines', lines.filter((_, i) => i !== n - 1))
+      return `Removed line #${n}: ${hit.text}`
+    })
+  }
+  return LINE_USAGE
+}
+
 async function handle($: EngineInterface, args: string): Promise<string> {
   const a = args.trim()
   const now = await $.clock.now()
@@ -712,6 +765,10 @@ async function handle($: EngineInterface, args: string): Promise<string> {
   if (/^forget$/i.test(a)) return forget($)
   const st = /^status(?:\s+(.*))?$/i.exec(a)
   if (st) return statusCommand($, (st[1] ?? '').trim())
+  const tn = /^tone(?:\s+(.*))?$/i.exec(a)
+  if (tn) return toneCommand($, (tn[1] ?? '').trim().toLowerCase())
+  const ln = /^line(?:\s+(.*))?$/i.exec(a)
+  if (ln) return lineCommand($, (ln[1] ?? '').trim())
   const hc = /^(prefs|mute|unmute|failures-only|kinds)(?:\s+(.*))?$/i.exec(a)
   if (hc) return hostedControl($, (hc[1] ?? '').toLowerCase(), (hc[2] ?? '').trim(), now)
   const v = /^(snooze|pause|resume|bedtime|wake|hours|days|quiet)(?:\s+(.*))?$/i.exec(a)
@@ -749,8 +806,9 @@ async function breakPromptNow($: EngineInterface) {
   if (sat === null || sat < state.cfg.sitMin || now - state.lastAgentNudge < AGENT_EVERY_MS) return
   if (!isWorkTime(state.cfg.controls, now) || (await isHeldNow($, now))) return
   state.lastAgentNudge = now
+  const line = await say($, 'break', { minutes: sat })
   $.ui.toast(
-    `Agents have this for a few minutes. You've been at the keyboard ${sat}m: walk, refill your water, stretch.`,
+    line ?? `Agents have this for a few minutes. You've been at the keyboard ${sat}m: walk, refill your water, stretch.`,
     { timeoutMs: 12_000 },
   )
 }
@@ -774,8 +832,8 @@ export const register: Register = (on, options) => {
     state.sessionId = await $.session.id()
     await $.command.register({
       name: 'nudge',
-      description: 'Set, list or cancel nudges; snooze or pause them; set bedtime, work hours and quiet hours; choose status line segments; manage hosted nudges; /nudge report shows your sitting log',
-      argumentHint: 'in 20m <text> | at 17:30 <text> | every 45m <text> | list | cancel <id> | snooze 30m | pause | resume | bedtime|wake HH:MM | hours|quiet HH:MM-HH:MM | days mon,tue | status <list> | prefs | mute|unmute owner/repo | failures-only on|off | kinds <list> | report',
+      description: 'Set, list or cancel nudges; snooze or pause them; set bedtime, work hours and quiet hours; set the tone, plain or vulgar, and your own lines for it; choose status line segments; manage hosted nudges; /nudge report shows your sitting log',
+      argumentHint: 'in 20m <text> | at 17:30 <text> | every 45m <text> | list | cancel <id> | snooze 30m | pause | resume | bedtime|wake HH:MM | hours|quiet HH:MM-HH:MM | days mon,tue | status <list> | tone plain|vulgar | line add <kind> <text>|list|rm <n> | prefs | mute|unmute owner/repo | failures-only on|off | kinds <list> | report',
       immediate: true,
     })
     await $.tool.register({
