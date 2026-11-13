@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.1] - 2026-11-13
+
+### Fixed
+
+- A routing prompt denial hands its reason back to Claude as the tool error, so it can run `devibe:voice` and retry in the same turn. The turn no longer ends on a denial.
+
 ## [1.0.0] - 2026-11-11
 
 ### Added

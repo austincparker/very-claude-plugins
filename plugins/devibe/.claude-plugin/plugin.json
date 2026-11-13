@@ -1,6 +1,6 @@
 {
   "name": "devibe",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "The human pass over machine-written work: asn-lint for backward-looking narration in code, voice for outgoing prose, and a stateless gate that denies prose carrying common machine tells.",
   "author": {
     "name": "Austin Parker"
