@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { KINDS, STARTER, fill, kindForSource, parseLine, pickLine, readLines, readTone } from '../hooks/lines'
+import { KINDS, STARTER, fill, kindForSource, render, parseLine, pickLine, readLines, readTone } from '../hooks/lines'
 import { MINUTE } from '../hooks/schedule'
 
 const SERVER = 'plugin:nudgewhen:nudgewhen'
@@ -30,6 +30,12 @@ test('hosted sources map to the kinds register.ts labels them with', () => {
   expect(kindForSource('calendar')).toBe('any')
 })
 
+test('render appends the nudge text after a dash when a line has no {text}', () => {
+  expect(render('move, you lump', { text: 'tea' })).toBe('move, you lump - tea')
+  expect(render('move: {text}', { text: 'tea' })).toBe('move: tea')
+  expect(render('{minutes} minutes on your ass', { minutes: 40 })).toBe('40 minutes on your ass')
+})
+
 test('fill puts the minutes and the text into a line and leaves other braces alone', () => {
   expect(fill('sat {minutes}m: {text} {x}', { minutes: 42, text: 'ci red' })).toBe('sat 42m: ci red {x}')
   expect(fill('{text}{text}', { text: 'a' })).toBe('aa')
@@ -53,6 +59,8 @@ test('parseLine takes a kind and text, strips control characters, and refuses th
   expect(parseLine('ci the build is fucked: {text}')).toEqual({ kind: 'ci', text: 'the build is fucked: {text}' })
   expect(parseLine('ANY  hello\u001b[31m there')).toEqual({ kind: 'any', text: 'hello [31m there' })
   expect(typeof parseLine('nope some text')).toBe('string')
+  for (const k of ['sit', 'bed', 'wake']) expect(parseLine(`${k} text`)).toBe('Sit, bed and wake lines are not kept: those show only in the status line.')
+  expect(KINDS).toEqual(['break', 'reminder', 'ci', 'review', 'landed', 'any'])
   expect(typeof parseLine('ci')).toBe('string')
   expect(typeof parseLine('ci   ')).toBe('string')
   expect(typeof parseLine(`ci ${'x'.repeat(201)}`)).toBe('string')
@@ -69,9 +77,9 @@ test('readLines keeps well-formed stored lines only, at most 200', () => {
 test('pickLine prefers the kind, then any, then the starter set', () => {
   const mine = [{ kind: 'ci', text: 'mine-ci' }, { kind: 'any', text: 'mine-any' }]
   expect(pickLine(mine, 'ci')).toBe('mine-ci')
-  expect(pickLine(mine, 'bed')).toBe('mine-any')
-  expect(STARTER.bed).toContain(pickLine([], 'bed'))
-  expect(STARTER.ci).toContain(pickLine([{ kind: 'bed', text: 'z' }], 'ci'))
+  expect(pickLine(mine, 'landed')).toBe('mine-any')
+  expect(STARTER.landed).toContain(pickLine([], 'landed'))
+  expect(STARTER.ci).toContain(pickLine([{ kind: 'landed', text: 'z' }], 'ci'))
 })
 /** The engine beneath the mod: idle machine, recorded toasts, notifications and config writes, hosted polls on demand. */
 function world(on: On, now: number, entries: Record<string, unknown> = {}, hostedNudges: unknown[] = [], configError?: string) {
@@ -158,12 +166,20 @@ test('vulgar tone says the user own line for the kind, filling the hosted text',
   expect(shown.notified).toEqual(['holy shit, main is red'])
 })
 
-test('vulgar tone falls back to any, and a reminder fills its text', { options: { tone: 'vulgar' } }, async ($, on) => {
+test('vulgar tone says a reminder line, and falls back to any without appending twice', { options: { tone: 'vulgar' } }, async ($, on) => {
   const now = localAt(12)
-  const a = world(on, now, { lines: [{ kind: 'any', text: 'move, you lump: {text}' }], nudges: [{ id: 1, text: 'tea', due: now - 1000 }] })
+  const a = world(on, now, { lines: [{ kind: 'reminder', text: 'move, you lump: {text}' }], nudges: [{ id: 1, text: 'tea', due: now - 1000 }] })
   await start($)
   await a.clock.settle()
   expect(a.shown.toasts).toEqual(['move, you lump: tea'])
+})
+
+test('a vulgar line without {text} gets the reminder text appended', { options: { tone: 'vulgar' } }, async ($, on) => {
+  const now = localAt(12)
+  const b = world(on, now, { lines: [{ kind: 'any', text: 'move, you lump' }], nudges: [{ id: 1, text: 'tea', due: now - 1000 }] })
+  await start($)
+  await b.clock.settle()
+  expect(b.shown.toasts).toEqual(['move, you lump - tea'])
 })
 
 test('vulgar tone with no lines uses the starter set for the kind', { options: { tone: 'vulgar' } }, async ($, on) => {
@@ -187,7 +203,7 @@ test('the agent-launch break toast fills the minutes from a break line', { optio
 
 test('the status entry and /nudge list keep plain wording under vulgar tone', { options: { tone: 'vulgar' } }, async ($, on) => {
   const now = localAt(23, 30)
-  const { clock, shown } = world(on, now, { nudges: [{ id: 1, text: 'tea', due: now + 5 * MINUTE }], lines: [{ kind: 'bed', text: 'go to fucking bed' }] })
+  const { clock, shown } = world(on, now, { nudges: [{ id: 1, text: 'tea', due: now + 5 * MINUTE }], lines: [{ kind: 'any', text: 'go to fucking bed' }] })
   await start($)
   await clock.settle()
   expect(shown.status).toBe('past 11pm · time to wrap up')
@@ -209,7 +225,7 @@ test('/nudge tone writes the setting and refuses anything else', async ($, on) =
 
 test('/nudge tone vulgar takes effect at once', async ($, on) => {
   const now = localAt(12)
-  const { clock, shown } = world(on, now, { nudges: [{ id: 1, text: 'tea', due: now + 5 * MINUTE }], lines: [{ kind: 'any', text: 'fuck, {text}' }] })
+  const { clock, shown } = world(on, now, { nudges: [{ id: 1, text: 'tea', due: now + 5 * MINUTE }], lines: [{ kind: 'reminder', text: 'fuck, {text}' }] })
   await start($)
   await clock.settle()
   await nudge($, 'tone vulgar')
@@ -224,7 +240,7 @@ test('/nudge line add, list and rm keep the lines in the store', async ($, on) =
   expect((await nudge($, 'line add any get up, you lump')).text).toBe('Added line #2 (any).')
   expect((await nudge($, 'line list')).text).toBe('Lines:\n  #1  ci  the build shat itself: {text}\n  #2  any  get up, you lump')
   expect((await nudge($, 'line list ci')).text).toBe('Lines:\n  #1  ci  the build shat itself: {text}')
-  expect((await nudge($, 'line list bed')).text).toMatch(/No lines/)
+  expect((await nudge($, 'line list review')).text).toMatch(/No lines/)
   expect((await nudge($, 'line rm 1')).text).toBe('Removed line #1: the build shat itself: {text}')
   expect((await nudge($, 'line list')).text).toBe('Lines:\n  #1  any  get up, you lump')
   expect((await nudge($, 'line rm 9')).text).toMatch(/No line #9/)

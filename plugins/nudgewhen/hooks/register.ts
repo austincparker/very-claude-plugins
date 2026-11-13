@@ -32,7 +32,7 @@ import {
   parsePrefs,
   prefsLines,
 } from './hosted'
-import { KINDS as LINE_KINDS, LINES_MAX, kindForSource, fill, parseLine, pickLine, readLines, readTone } from './lines'
+import { KINDS as LINE_KINDS, LINES_MAX, kindForSource, render, parseLine, pickLine, readLines, readTone } from './lines'
 import type { Kind, Tone } from './lines'
 import { MINUTE, USAGE, afterFiring, clock, dayHint, describe, parseWhen, span } from './schedule'
 import type { Nudge } from './schedule'
@@ -235,7 +235,7 @@ async function takeDue($: EngineInterface, now: number): Promise<Nudge[]> {
 /** The line to show for `kind` under the vulgar tone, filled in; null under the plain tone, which keeps its own wording. */
 async function say($: EngineInterface, kind: Kind, vars: { minutes?: number; text?: string }): Promise<string | null> {
   if (state.cfg.tone !== 'vulgar') return null
-  return fill(pickLine(readLines(await $.store.get('lines')), kind), vars)
+  return render(pickLine(readLines(await $.store.get('lines')), kind), vars)
 }
 
 async function fireDue($: EngineInterface) {
@@ -244,7 +244,7 @@ async function fireDue($: EngineInterface) {
   const due = await locked(() => takeDue($, now))
   for (const n of due) {
     const late = now - n.due > 2 * MINUTE ? ` (due ${span(now - n.due)} ago)` : ''
-    const line = await say($, 'any', { text: `${n.text}${late}` })
+    const line = await say($, 'reminder', { text: `${n.text}${late}` })
     $.ui.toast(line ?? `nudge: ${n.text}${late}`, { timeoutMs: 15_000 })
     $.ui.notify(line ?? `${n.text}${late}`, { title: 'nudgewhen' }).catch(() => undefined)
   }
@@ -728,7 +728,7 @@ async function lineCommand($: EngineInterface, arg: string): Promise<string> {
   const rest = (m?.[2] ?? '').trim()
   if (verb === 'add') {
     const line = parseLine(rest)
-    if (typeof line === 'string') return line.startsWith('Usage') ? `Usage: /nudge line add <kind> <text>; kinds: ${LINE_KINDS.join(', ')}.` : line
+    if (typeof line === 'string') return line
     return locked(async () => {
       const lines = readLines(await $.store.get('lines'))
       if (lines.length >= LINES_MAX) return `You already have ${LINES_MAX} lines. Remove one with /nudge line rm <n>.`
