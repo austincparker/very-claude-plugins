@@ -583,7 +583,14 @@ class TestPromptHookAnswersInThePromptShape(unittest.TestCase):
     def test_each_prompt_hook_carries_only_documented_keys(self):
         for h in self.prompt_hooks():
             with self.subTest(prompt=h["prompt"][:60]):
-                self.assertLessEqual(set(h), {"type", "prompt", "timeout", "model"})
+                self.assertLessEqual(set(h), {"type", "prompt", "timeout", "model", "continueOnBlock"})
+
+    def test_a_denial_returns_to_claude(self):
+        # Without continueOnBlock, ok:false on PreToolUse ends the turn instead of
+        # handing the reason back so Claude can run the voice pass and retry.
+        for h in self.prompt_hooks():
+            with self.subTest(prompt=h["prompt"][:60]):
+                self.assertIs(h.get("continueOnBlock"), True)
 
 
 class TestEndToEnd(unittest.TestCase):
