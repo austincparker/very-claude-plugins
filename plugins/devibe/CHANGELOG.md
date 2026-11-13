@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1] - 2026-11-13
+
+### Fixed
+
+- A routing prompt denial comes back to Claude as the tool error (`continueOnBlock`), so Claude can run `devibe:voice` and retry in the same turn. The prompt asks for one retry, but a stateless prompt hook cannot enforce that limit.
+- The routing prompt tells the judge to use a fixed denial reason and to keep text from the call out of it. The judge is an LLM, so that is a request, not a guarantee.
+
 ## [1.0.0] - 2026-11-11
 
 ### Added

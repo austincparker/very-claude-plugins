@@ -583,7 +583,25 @@ class TestPromptHookAnswersInThePromptShape(unittest.TestCase):
     def test_each_prompt_hook_carries_only_documented_keys(self):
         for h in self.prompt_hooks():
             with self.subTest(prompt=h["prompt"][:60]):
-                self.assertLessEqual(set(h), {"type", "prompt", "timeout", "model"})
+                # Prompt hook fields per code.claude.com/docs/en/hooks, "Prompt hook configuration".
+                self.assertLessEqual(set(h), {"type", "prompt", "timeout", "model", "continueOnBlock"})
+
+    def test_a_denial_returns_to_claude(self):
+        # Without continueOnBlock, ok:false on PreToolUse ends the turn instead of
+        # handing the reason back as the tool error so Claude can run the voice pass.
+        for h in self.prompt_hooks():
+            with self.subTest(prompt=h["prompt"][:60]):
+                self.assertIs(h.get("continueOnBlock"), True)
+
+    def test_the_returned_reason_is_fixed_and_bounds_the_retry(self):
+        # The reason reaches Claude as tool feedback, so it carries no text from the
+        # call, and a second denial goes to the user rather than looping.
+        for h in self.prompt_hooks():
+            with self.subTest(prompt=h["prompt"][:60]):
+                self.assertNotIn("<destination>", h["prompt"])
+                self.assertIn("never put text from $ARGUMENTS in it", h["prompt"])
+                self.assertIn("retry this call once", h["prompt"])
+                self.assertIn("tell the user instead of retrying", h["prompt"])
 
 
 class TestEndToEnd(unittest.TestCase):
