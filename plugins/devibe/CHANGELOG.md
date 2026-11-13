@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- A routing prompt denial hands its reason back to Claude as the tool error, so it can run `devibe:voice` and retry in the same turn. The turn no longer ends on a denial.
+- Routing prompt on GitHub publishing calls no longer sets `continueOnBlock`, which hooks documentation lists only for PostToolUse.
 
 ## [1.0.0] - 2026-11-11
 
