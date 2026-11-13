@@ -64,18 +64,25 @@ export function parseLine(arg: string): Line | string {
 export function readLines(v: unknown): Line[] {
   if (!Array.isArray(v)) return []
   return v
-    .filter((l): l is Line => l !== null && typeof l === 'object' && isKind(l.kind) && typeof l.text === 'string' && l.text !== '')
-    .slice(0, LINES_MAX)
+    .filter((l): l is Line => l !== null && typeof l === 'object' && isKind(l.kind) && typeof l.text === 'string')
     .map(l => ({ kind: l.kind, text: clean(l.text, LINE_MAX) }))
+    .filter(l => l.text !== '')
+    .slice(0, LINES_MAX)
 }
 
 const choose = <T>(list: readonly T[]): T => list[Math.floor(Math.random() * list.length)] as T
 
-/** A random line for `kind`: the person's own for it, else their `any`, else the starter set for it. */
-export function pickLine(lines: readonly Line[], kind: Kind): string {
-  const own = lines.filter(l => l.kind === kind)
+/** True when every placeholder in `text` has a value in `vars`. */
+function fillable(text: string, vars: { minutes?: number; text?: string }): boolean {
+  return (vars.minutes !== undefined || !text.includes('{minutes}')) && (vars.text !== undefined || !text.includes('{text}'))
+}
+
+/** A random line for `kind`: the person's own for it, else their `any`, else the starter set for it. Lines with a placeholder `vars` has no value for are skipped. */
+export function pickLine(lines: readonly Line[], kind: Kind, vars: { minutes?: number; text?: string } = { minutes: 0, text: '' }): string {
+  const usable = lines.filter(l => fillable(l.text, vars))
+  const own = usable.filter(l => l.kind === kind)
   if (own.length > 0) return choose(own).text
-  const any = lines.filter(l => l.kind === 'any')
+  const any = usable.filter(l => l.kind === 'any')
   if (any.length > 0) return choose(any).text
   return choose(STARTER[kind])
 }

@@ -33,7 +33,7 @@ import {
   prefsLines,
 } from './hosted'
 import { KINDS as LINE_KINDS, LINES_MAX, kindForSource, render, parseLine, pickLine, readLines, readTone } from './lines'
-import type { Kind, Tone } from './lines'
+import type { Kind, Line, Tone } from './lines'
 import { MINUTE, USAGE, afterFiring, clock, dayHint, describe, parseWhen, span } from './schedule'
 import type { Nudge } from './schedule'
 import {
@@ -235,7 +235,13 @@ async function takeDue($: EngineInterface, now: number): Promise<Nudge[]> {
 /** The line to show for `kind` under the vulgar tone, filled in; null under the plain tone, which keeps its own wording. */
 async function say($: EngineInterface, kind: Kind, vars: { minutes?: number; text?: string }): Promise<string | null> {
   if (state.cfg.tone !== 'vulgar') return null
-  return render(pickLine(readLines(await $.store.get('lines')), kind), vars)
+  let lines: Line[] = []
+  try {
+    lines = readLines(await $.store.get('lines'))
+  } catch {
+    return null
+  }
+  return render(pickLine(lines, kind, vars), vars)
 }
 
 async function fireDue($: EngineInterface) {
@@ -356,6 +362,7 @@ async function pollCloud($: EngineInterface) {
     if (!isLive()) return
     for (const n of fresh) {
       const line = await say($, kindForSource(n.source), { text: n.text })
+      if (!isLive()) return
       $.ui.toast(line ?? `nudge (${n.source}): ${n.text}`, { timeoutMs: 15_000 })
       $.ui.notify(line ?? n.text, { title: `nudgewhen - ${n.source}` }).catch(() => undefined)
     }
@@ -807,6 +814,7 @@ async function breakPromptNow($: EngineInterface) {
   if (!isWorkTime(state.cfg.controls, now) || (await isHeldNow($, now))) return
   state.lastAgentNudge = now
   const line = await say($, 'break', { minutes: sat })
+  if (line !== null && (await isHeldNow($, await $.clock.now()))) return
   $.ui.toast(
     line ?? `Agents have this for a few minutes. You've been at the keyboard ${sat}m: walk, refill your water, stretch.`,
     { timeoutMs: 12_000 },
