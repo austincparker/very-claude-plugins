@@ -83,6 +83,20 @@ Add your own lines with `/nudge line add <kind> <text>`, see them with `/nudge l
 
 The status entry, `/nudge list` and the setup hints stay plain whatever the tone. Your lines stay on your machine and are never sent to the hosted server.
 
+## Titles
+
+In Ghostty on macOS, nudgewhen sets the tab title to the session's role and the window title to the working set's name. It reads `NUDGEWHEN_ROLE` and `NUDGEWHEN_SET` at session start, or what `/nudge title` stored for the session. Nothing is sent to the hosted server.
+
+| Command | Does |
+| --- | --- |
+| `/nudge title` | shows the current titles |
+| `/nudge title role <text>` | sets the tab title |
+| `/nudge title set <text>` | sets the window title |
+| `/nudge title clear` | clears both and forgets them |
+| `/nudge title on` or `off` | the `titles` setting (default `on`) |
+
+A title is at most 60 characters, control characters removed. Outside Ghostty, or with no tty, nothing runs.
+
 ## Hosted controls
 
 These change what the hosted server sends you. Signed out, each answers with a one-line sign-in hint (`/mcp`).
