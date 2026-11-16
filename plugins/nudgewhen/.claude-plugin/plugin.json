@@ -71,6 +71,12 @@
       "description": "plain keeps the usual wording. vulgar has toasts and notifications say a random crude line, yours from /nudge line add or the built-in starters. The status line stays plain.",
       "default": "plain"
     },
+    "titles": {
+      "type": "string",
+      "title": "Ghostty titles (on or off)",
+      "description": "on sets the Ghostty tab title to NUDGEWHEN_ROLE and the window title to NUDGEWHEN_SET at session start, or to what /nudge title stored. off leaves the titles alone.",
+      "default": "on"
+    },
     "status_segments": {
       "type": "string",
       "title": "Status line segments",

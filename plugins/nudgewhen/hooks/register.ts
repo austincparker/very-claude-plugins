@@ -34,6 +34,7 @@ import {
 } from './hosted'
 import { KINDS as LINE_KINDS, LINES_MAX, kindForSource, render, parseLine, pickLine, readLines, readTone } from './lines'
 import type { Kind, Line, Tone } from './lines'
+import { TITLES_MAX, cleanTitle, isGhostty, parseTitleArgs, readTitlesOn, titleArgv, ttyPath } from './titles'
 import { MINUTE, USAGE, afterFiring, clock, dayHint, describe, parseWhen, span } from './schedule'
 import type { Nudge } from './schedule'
 import {
@@ -58,7 +59,7 @@ import {
 import type { Free, Paid } from './status'
 import { SAMPLE_MS, isSampler, localStamp, num, readLog, readSit, report, satMinutes, step } from './sitting'
 
-type Config = { sitMin: number; awayMin: number; bedtime: boolean; controls: Controls; segments: string; tone: Tone }
+type Config = { sitMin: number; awayMin: number; bedtime: boolean; controls: Controls; segments: string; tone: Tone; titles: boolean }
 type Fired = { id: number; text: string; at: number }
 type Source = 'ioreg' | 'xprintidle' | 'prompts'
 
@@ -124,6 +125,7 @@ function config(options: PluginOptions): { cfg: Config; warnings: string[] } {
       controls,
       segments: typeof options.status_segments === 'string' ? options.status_segments : DEFAULT_SEGMENTS,
       tone: readTone(options.tone),
+      titles: readTitlesOn(options.titles),
     },
     warnings: warnings.map(w => w.text),
   }
@@ -726,6 +728,87 @@ async function toneCommand($: EngineInterface, arg: string): Promise<string> {
   return (await setting($, 'tone', arg)) ?? `Tone is now ${arg}.`
 }
 
+type TitleEntry = { role: string; set: string }
+
+function readTitleMap(v: unknown): Record<string, TitleEntry> {
+  const out: Record<string, TitleEntry> = {}
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return out
+  for (const [id, e] of Object.entries(v)) {
+    const r = (e as Record<string, unknown> | null)?.role
+    const s = (e as Record<string, unknown> | null)?.set
+    if (typeof r === 'string' && typeof s === 'string') out[id] = { role: r, set: s }
+  }
+  return out
+}
+
+/** The tab and window titles this session wants: the stored pair first, then NUDGEWHEN_ROLE and NUDGEWHEN_SET. */
+async function wantedTitles($: EngineInterface): Promise<TitleEntry> {
+  const stored = readTitleMap(await $.store.get('titles'))[state.sessionId]
+  let role: string | undefined
+  let set: string | undefined
+  try {
+    role = await $.env.get('NUDGEWHEN_ROLE')
+  } catch {}
+  try {
+    set = await $.env.get('NUDGEWHEN_SET')
+  } catch {}
+  return { role: stored?.role || cleanTitle(role ?? ''), set: stored?.set || cleanTitle(set ?? '') }
+}
+
+/** Sets the Ghostty tab and window titles: `skipped` when nothing applies here, `failed` when osascript did not. */
+async function setTitles($: EngineInterface, t: TitleEntry, isClear = false): Promise<'ok' | 'skipped' | 'failed'> {
+  if (!state.cfg.titles || (!isClear && t.role === '' && t.set === '')) return 'skipped'
+  let term: string | undefined
+  try {
+    term = await $.env.get('TERM_PROGRAM')
+  } catch {}
+  if (!isGhostty(term)) return 'skipped'
+  const tty = ttyPath(await run($, ['sh', '-c', 'ps -o tty= -p $$']))
+  if (tty === null) return 'skipped'
+  return (await run($, titleArgv(tty, t.role, t.set))) === null ? 'failed' : 'ok'
+}
+
+async function applyTitles($: EngineInterface) {
+  await setTitles($, await wantedTitles($))
+}
+
+const NOT_SET = 'could not be set here: it needs Ghostty on macOS and titles on.'
+
+/** `/nudge title ...`: the tab title is the session's role, the window title the working set's name. */
+async function titleCommand($: EngineInterface, arg: string): Promise<string> {
+  const p = parseTitleArgs(arg)
+  if (typeof p === 'string') return p
+  if ('on' in p || 'off' in p) {
+    const v = 'on' in p ? 'on' : 'off'
+    return (await setting($, 'titles', v)) ?? `Titles are now ${v}.`
+  }
+  if ('show' in p) {
+    const t = await wantedTitles($)
+    return `Tab title: ${t.role || '(none)'}. Window title: ${t.set || '(none)'}. Titles are ${state.cfg.titles ? 'on' : 'off'}.`
+  }
+  const keep = (next: TitleEntry | null) =>
+    locked(async () => {
+      const map = readTitleMap(await $.store.get('titles'))
+      delete map[state.sessionId]
+      if (next !== null) map[state.sessionId] = next
+      const ids = Object.keys(map)
+      for (const id of ids.slice(0, Math.max(0, ids.length - TITLES_MAX))) delete map[id]
+      await $.store.set('titles', map)
+    })
+  if ('clear' in p) {
+    await keep(null)
+    const r = await setTitles($, { role: '', set: '' }, true)
+    if (r === 'failed') return 'Titles forgotten, but the Ghostty titles could not be cleared.'
+    return 'Titles cleared.'
+  }
+  const cur = await wantedTitles($)
+  const next = 'role' in p ? { ...cur, role: p.role } : { ...cur, set: p.set }
+  await keep(next)
+  const r = await setTitles($, next)
+  if (r !== 'ok') return `Saved, but the title ${r === 'failed' ? 'could not be set (osascript failed).' : NOT_SET}`
+  return 'role' in p ? `Tab title is now ${p.role}.` : `Window title is now ${p.set}.`
+}
+
 const LINE_USAGE = `Usage: /nudge line add <kind> <text> | line list [kind] | line rm <n>; kinds: ${LINE_KINDS.join(', ')}.`
 
 /** `/nudge line add|list|rm`: the person's own vulgar lines, kept in the store and never sent anywhere. */
@@ -774,6 +857,8 @@ async function handle($: EngineInterface, args: string): Promise<string> {
   if (st) return statusCommand($, (st[1] ?? '').trim())
   const tn = /^tone(?:\s+(.*))?$/i.exec(a)
   if (tn) return toneCommand($, (tn[1] ?? '').trim().toLowerCase())
+  const tt = /^title(?:\s+(.*))?$/i.exec(a)
+  if (tt) return titleCommand($, (tt[1] ?? '').trim())
   const ln = /^line(?:\s+(.*))?$/i.exec(a)
   if (ln) return lineCommand($, (ln[1] ?? '').trim())
   const hc = /^(prefs|mute|unmute|failures-only|kinds)(?:\s+(.*))?$/i.exec(a)
@@ -840,8 +925,8 @@ export const register: Register = (on, options) => {
     state.sessionId = await $.session.id()
     await $.command.register({
       name: 'nudge',
-      description: 'Set, list or cancel nudges; snooze or pause them; set bedtime, work hours and quiet hours; set the tone, plain or vulgar, and your own lines for it; choose status line segments; manage hosted nudges; /nudge report shows your sitting log',
-      argumentHint: 'in 20m <text> | at 17:30 <text> | every 45m <text> | list | cancel <id> | snooze 30m | pause | resume | bedtime|wake HH:MM | hours|quiet HH:MM-HH:MM | days mon,tue | status <list> | tone plain|vulgar | line add <kind> <text>|list|rm <n> | prefs | mute|unmute owner/repo | failures-only on|off | kinds <list> | report',
+      description: 'Set, list or cancel nudges; snooze or pause them; set bedtime, work hours and quiet hours; set the tone, plain or vulgar, and your own lines for it; set the Ghostty tab title (role) and window title (working set); choose status line segments; manage hosted nudges; /nudge report shows your sitting log',
+      argumentHint: 'in 20m <text> | at 17:30 <text> | every 45m <text> | list | cancel <id> | snooze 30m | pause | resume | bedtime|wake HH:MM | hours|quiet HH:MM-HH:MM | days mon,tue | status <list> | tone plain|vulgar | title role|set <text>|clear|on|off | line add <kind> <text>|list|rm <n> | prefs | mute|unmute owner/repo | failures-only on|off | kinds <list> | report',
       immediate: true,
     })
     await $.tool.register({
@@ -862,6 +947,7 @@ export const register: Register = (on, options) => {
       const timer = $.clock.every(TICK_MS, () => void tick($))
       state.stop = () => timer.cancel()
       void tick($)
+      if (e.surface === null || e.surface === 'terminal') await applyTitles($).catch(() => undefined)
     }
     return next(e)
   })
