@@ -92,7 +92,7 @@ In Ghostty on macOS, nudgewhen sets the tab title to the session's role and the 
 | `/nudge title` | shows the current titles |
 | `/nudge title role <text>` | sets the tab title |
 | `/nudge title set <text>` | sets the window title |
-| `/nudge title clear` | clears both and forgets them |
+| `/nudge title clear` | clears both, and the environment values no longer apply to this session |
 | `/nudge title on` or `off` | the `titles` setting (default `on`) |
 
 A title is at most 60 characters, control characters removed. Outside Ghostty, or with no tty, nothing runs.

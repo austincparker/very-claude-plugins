@@ -11,9 +11,10 @@ export function cleanTitle(s: string): string {
   return s.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim().slice(0, TITLE_MAX)
 }
 
-/** Titles are off only when the setting is exactly `off`. */
+/** Titles are off for `off`, `false`, `no` or `0` in any case and padding, or a boolean false. */
 export function readTitlesOn(v: unknown): boolean {
-  return v !== 'off'
+  if (v === false) return false
+  return !['off', 'false', 'no', '0'].includes(String(v ?? '').trim().toLowerCase())
 }
 
 /** What `/nudge title <arg>` asks for, or the usage line when it is not understood. */

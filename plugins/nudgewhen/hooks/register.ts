@@ -728,7 +728,7 @@ async function toneCommand($: EngineInterface, arg: string): Promise<string> {
   return (await setting($, 'tone', arg)) ?? `Tone is now ${arg}.`
 }
 
-type TitleEntry = { role: string; set: string }
+type TitleEntry = { role: string; set: string; cleared?: true }
 
 function readTitleMap(v: unknown): Record<string, TitleEntry> {
   const out: Record<string, TitleEntry> = {}
@@ -736,7 +736,9 @@ function readTitleMap(v: unknown): Record<string, TitleEntry> {
   for (const [id, e] of Object.entries(v)) {
     const r = (e as Record<string, unknown> | null)?.role
     const s = (e as Record<string, unknown> | null)?.set
-    if (typeof r === 'string' && typeof s === 'string') out[id] = { role: r, set: s }
+    if (typeof r === 'string' && typeof s === 'string') {
+      out[id] = (e as Record<string, unknown>).cleared === true ? { role: r, set: s, cleared: true } : { role: r, set: s }
+    }
   }
   return out
 }
@@ -752,7 +754,11 @@ async function wantedTitles($: EngineInterface): Promise<TitleEntry> {
   try {
     set = await $.env.get('NUDGEWHEN_SET')
   } catch {}
-  return { role: stored?.role || cleanTitle(role ?? ''), set: stored?.set || cleanTitle(set ?? '') }
+  if (stored?.cleared) return { role: '', set: '' }
+  return {
+    role: cleanTitle(stored?.role ?? '') || cleanTitle(role ?? ''),
+    set: cleanTitle(stored?.set ?? '') || cleanTitle(set ?? ''),
+  }
 }
 
 /** Sets the Ghostty tab and window titles: `skipped` when nothing applies here, `failed` when osascript did not. */
@@ -763,7 +769,7 @@ async function setTitles($: EngineInterface, t: TitleEntry, isClear = false): Pr
     term = await $.env.get('TERM_PROGRAM')
   } catch {}
   if (!isGhostty(term)) return 'skipped'
-  const tty = ttyPath(await run($, ['sh', '-c', 'ps -o tty= -p $$']))
+  const tty = ttyPath(await run($, ['sh', '-c', 't=$(ps -o tty= -p $$); case "$t" in *\\?*|"") t=$(ps -o tty= -p $PPID);; esac; echo "$t"']))
   if (tty === null) return 'skipped'
   return (await run($, titleArgv(tty, t.role, t.set))) === null ? 'failed' : 'ok'
 }
@@ -796,7 +802,7 @@ async function titleCommand($: EngineInterface, arg: string): Promise<string> {
       await $.store.set('titles', map)
     })
   if ('clear' in p) {
-    await keep(null)
+    await keep({ role: '', set: '', cleared: true })
     const r = await setTitles($, { role: '', set: '' }, true)
     if (r === 'failed') return 'Titles forgotten, but the Ghostty titles could not be cleared.'
     return 'Titles cleared.'
@@ -947,7 +953,7 @@ export const register: Register = (on, options) => {
       const timer = $.clock.every(TICK_MS, () => void tick($))
       state.stop = () => timer.cancel()
       void tick($)
-      if (e.surface === null || e.surface === 'terminal') await applyTitles($).catch(() => undefined)
+      if (e.surface === null || e.surface === 'terminal') void applyTitles($).catch(() => undefined)
     }
     return next(e)
   })

@@ -78,8 +78,8 @@ test('cleanTitle strips control characters, trims and caps at 60', () => {
 })
 
 test('titles are off only when the value is exactly off', () => {
-  expect(readTitlesOn('off')).toBe(false)
-  for (const v of [undefined, '', 'on', 'Off', ' off', 'no', 0, false]) expect(readTitlesOn(v)).toBe(true)
+  for (const v of ['off', 'Off', ' off ', 'no', 'false', '0', false]) expect(readTitlesOn(v)).toBe(false)
+  for (const v of [undefined, '', 'on', 'ON', true]) expect(readTitlesOn(v)).toBe(true)
 })
 
 test('parseTitleArgs reads each verb and returns usage for the rest', () => {
@@ -171,6 +171,22 @@ test('the stored role beats the env at the next start', async ($, on) => {
   expect(osa(seen).map(a => a.slice(-3))).toEqual([['/dev/ttys006', 'Ship', 'nudge-set']])
 })
 
+test('stored titles are cleaned before they reach osascript', async ($, on) => {
+  const seen = world(on, { env: GHOSTTY, entries: { titles: { 'session-a': { role: 'Sh\u001bip', set: 'x'.repeat(80) } } } })
+  await start($)
+  expect(osa(seen).map(a => a.slice(-3))).toEqual([['/dev/ttys006', 'Ship', 'x'.repeat(60)]])
+})
+
+test('after clear the env titles do not come back', async ($, on) => {
+  const seen = world(on, { env: ROLE_ENV })
+  await start($)
+  await nudge($, 'title clear')
+  seen.argv.length = 0
+  expect((await nudge($, 'title')).text).toContain('Tab title: (none)')
+  await start($)
+  expect(osa(seen)).toEqual([])
+})
+
 test('off stops the titles and on brings them back', async ($, on) => {
   const seen = world(on, { env: ROLE_ENV })
   expect((await nudge($, 'title off')).text).toBe('Titles are now off.')
@@ -189,13 +205,13 @@ test('titles configured off run nothing', { options: { titles: 'off' } }, async 
   expect(osa(seen)).toEqual([])
 })
 
-test('clear empties both titles and forgets the entry', async ($, on) => {
+test('clear empties both titles and stops the env fallback', async ($, on) => {
   const seen = world(on, { env: GHOSTTY, entries: { titles: { 'session-a': { role: 'Ship', set: 'x' }, 'session-b': { role: 'Y', set: '' } } } })
   await start($)
   seen.argv.length = 0
   await nudge($, 'title clear')
   expect(osa(seen).map(a => a.slice(-3))).toEqual([['/dev/ttys006', '', '']])
-  expect(seen.store.get('titles')).toEqual({ 'session-b': { role: 'Y', set: '' } })
+  expect(seen.store.get('titles')).toEqual({ 'session-b': { role: 'Y', set: '' }, 'session-a': { role: '', set: '', cleared: true } })
 })
 
 test('a failing osascript is silent at start and reported by the command', async ($, on) => {
