@@ -160,7 +160,8 @@ test('an ack goes out 100 ids at a time', async ($, on) => {
   expect(calls.acks.map(a => a.length)).toEqual([100, 50])
 })
 
-test('not signed in leaves local nudges firing, and the next attempts wait 1, 2, 4, 8 then 15 minutes', async ($, on) => {
+// Simulated-clock run takes ~2.5s alone and longer under the parallel suite on a slow host.
+test('not signed in leaves local nudges firing, and the next attempts wait 1, 2, 4, 8 then 15 minutes', { timeoutMs: 8000 }, async ($, on) => {
   const nudges = [{ id: 1, text: 'tea', due: NOW + 20_000 }]
   const { clock, shown, calls } = world(on, NOW, { connects: [needsAuth] }, { nudges })
   await start($)
@@ -262,7 +263,8 @@ test('a nudge handed back after a failed ack is acked again and not shown twice'
   expect(calls.acks).toEqual([['a'], ['a']])
 })
 
-test('an id shown in the last hour is not shown again, but is forgotten after it', async ($, on) => {
+// Simulated-clock run takes ~2.5s alone and longer under the parallel suite on a slow host.
+test('an id shown in the last hour is not shown again, but is forgotten after it', { timeoutMs: 8000 }, async ($, on) => {
   const a = hosted('a', 'calendar', 'call mum')
   const { clock, shown } = world(on, NOW, { polls: [poll([a]), poll([a]), poll([a])] })
   await start($)
