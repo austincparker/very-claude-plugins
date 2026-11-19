@@ -339,7 +339,8 @@ test('/nudge snooze refuses what is not a duration', async ($, on) => {
   expect((await nudge($, 'snooze soon')).text).toMatch(/Try "\/nudge snooze 30m"/)
 })
 
-test('/nudge pause holds until resume; resume clears it', async ($, on) => {
+// Simulated-clock run takes ~2.5s alone and longer under the parallel suite on a slow host.
+test('/nudge pause holds until resume; resume clears it', { timeoutMs: 8000 }, async ($, on) => {
   const now = localAt(12)
   const { clock, shown } = world(on, now, { nudges: [{ id: 1, text: 'tea', due: now + 5 * MINUTE }] })
   await start($)
