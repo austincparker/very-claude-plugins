@@ -7,6 +7,11 @@
       "name": "nudgewhen",
       "source": "./plugins/nudgewhen",
       "description": "Nudges in Claude Code: take a break, go to bed, and any reminder you set with /nudge or by asking Claude."
+    },
+    {
+      "name": "devibe",
+      "source": "./plugins/devibe",
+      "description": "The human pass over machine-written work: lint backward-looking narration in code, rewrite outgoing prose, and deny prose with common machine tells."
     }
   ],
   "renames": { "nudge-me": "nudgewhen" }

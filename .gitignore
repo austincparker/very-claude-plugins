@@ -4,3 +4,6 @@
 plugins/*/.claude-plugin/types/
 .mcpb-cache/
 node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
