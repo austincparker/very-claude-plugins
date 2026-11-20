@@ -1,6 +1,6 @@
 {
   "name": "nudgewhen",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Nudges in Claude Code: take a break, go to bed, and any reminder you set with /nudge or by asking Claude.",
   "author": {
     "name": "Austin Parker"
@@ -86,7 +86,7 @@
     "idle_nudge": {
       "type": "boolean",
       "title": "Nudge sessions when idle?",
-      "description": "When a session ends its turn still holding background work or a scheduled wake-up and then sits with no prompt from you, run the idle check: it hands off what a script can finish and says whether the session can close. Runs a turn, which uses your usage. See the README for the timing.",
+      "description": "When a session ends its turn still holding background work or a scheduled wake-up and then sits with no prompt from you, run the idle nudge (`idle-nudge`): it hands off what a script can finish and says whether the session can close. Runs a turn, which uses your usage. See the README for the timing.",
       "default": false
     }
   }
