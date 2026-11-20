@@ -9,7 +9,7 @@ const ON = { options: { idle_nudge: true } }
 const PLUGIN_CMD: CommandInfo = { name: 'nudgewhen:idle-check', description: '', source: 'plugin', plugin: 'nudgewhen' }
 
 type Stop = { tasks?: readonly { id: string; type: string }[]; crons?: readonly { id: string; prompt: string }[]; session?: string; active?: boolean }
-type World = { commands?: CommandInfo[]; draft?: () => string; runFails?: boolean; submitFails?: boolean }
+type World = { commands?: CommandInfo[]; draft?: () => string; runFails?: boolean; submitFails?: boolean; envFails?: boolean }
 
 /** The engine beneath the mod: what it lists, and a record of what the mod ran, submitted and showed. */
 function world(on: On, w: World = {}) {
@@ -47,10 +47,15 @@ function world(on: On, w: World = {}) {
   on('tool.call', (_, e) => ({ result: e.tool === 'Monitor' ? { taskId: 'mon-mine', timeoutMs: 0 } : {} }))
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('env.get', (_, e) => ({ value: e.name === 'TMPDIR' ? '/tmp/t/' : undefined }))
-  on('env.set', (_, e) => {
+  on('env.set', (_, e, next) => {
+    if (w.envFails) return next(e)
     seen.envSets.push(`${e.name}=${e.value}`)
-    reportPath = e.value ?? ''
+    reportPath = `${e.value}/nudgewhen-idle-session-a.json`
     return { value: {} }
+  })
+  on('fs.write', (_, e) => {
+    files.set(e.path, e.text)
+    return { value: undefined }
   })
   // No file: handed on with nothing beneath, so the read rejects as a missing file does.
   on('fs.read', (_, e, next) => {
@@ -59,6 +64,7 @@ function world(on: On, w: World = {}) {
   })
   /** Ends a main-loop turn the way a session does: the Stop settings hook writes its input, then the turn completes. */
   const stop = async ($: Engine, s: Stop) => {
+    await $.turn.start({ text: '', turnId: 't' })
     if (reportPath !== '') {
       files.set(reportPath, JSON.stringify({
         session_id: s.session ?? 'session-a',
@@ -87,10 +93,10 @@ test('the setting off: nothing runs', async ($, on) => {
   expect(seen.envSets).toEqual([])
 })
 
-test('the setting on: the Stop hook is pointed at a per-session file', ON, async ($, on) => {
+test('the setting on: the Stop hook is pointed at a directory', ON, async ($, on) => {
   const { seen } = world(on)
   await start($)
-  expect(seen.envSets).toEqual(['NUDGEWHEN_IDLE_FILE=/tmp/t/nudgewhen-idle-session-a.json'])
+  expect(seen.envSets).toEqual(['NUDGEWHEN_IDLE_DIR=/tmp/t'])
 })
 
 test('a shell held two minutes runs the check once per wait', ON, async ($, on) => {
@@ -134,18 +140,63 @@ test('a draft in the prompt box postpones the check', ON, async ($, on) => {
   expect(seen.runs).toEqual(['nudgewhen:idle-check'])
 })
 
-test('a timer that fires mid-turn runs the check after that turn stops', ON, async ($, on) => {
+test('a turn that starts cancels the pending check, and the next turn end re-arms it', ON, async ($, on) => {
   const { clock, seen, stop } = world(on)
   await start($)
   await stop($, { tasks: [{ id: 'mt-1', type: 'shell' }] })
+  await clock.advance(MINUTE)
   await $.turn.start({ text: '', turnId: 't1' })
   await clock.advance(IDLE_AFTER_MS)
   expect(seen.runs).toEqual([])
   await stop($, { tasks: [{ id: 'mt-1', type: 'shell' }] })
-  await clock.advance(4000)
+  await clock.advance(IDLE_AFTER_MS - 1000)
   expect(seen.runs).toEqual([])
   await clock.advance(1000)
   expect(seen.runs).toEqual(['nudgewhen:idle-check'])
+})
+
+test('an aborted turn does not read the report of an earlier one', ON, async ($, on) => {
+  const { clock, seen, stop } = world(on)
+  await start($)
+  await stop($, { tasks: [{ id: 'ab-1', type: 'shell' }] })
+  await $.turn.start({ text: '', turnId: 't2' })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: true, turnId: 't2', reason: 'answer' })
+  await clock.advance(IDLE_AFTER_MS * 2)
+  expect(seen.runs).toEqual([])
+})
+
+test('waits that did not get a nudge are tried again; a wake-up made again nudges again', ON, async ($, on) => {
+  const w: World = { runFails: true, submitFails: true }
+  const { clock, seen, stop } = world(on, w)
+  await start($)
+  await stop($, { crons: [{ id: 'c1', prompt: 'poll' }] })
+  await clock.advance(IDLE_AFTER_MS)
+  w.runFails = false
+  w.submitFails = false
+  await stop($, { crons: [{ id: 'c2', prompt: 'poll' }] })
+  await clock.advance(IDLE_AFTER_MS)
+  expect(seen.runs.length).toBe(2)
+  await stop($, {})
+  await clock.advance(IDLE_AFTER_MS)
+  await stop($, { crons: [{ id: 'c3', prompt: 'poll' }] })
+  await clock.advance(IDLE_AFTER_MS)
+  expect(seen.runs.length).toBe(3)
+})
+
+test('two wake-ups with one prompt count as two waits', ON, async ($, on) => {
+  const { clock, seen, stop } = world(on)
+  await start($)
+  await stop($, { crons: [{ id: 'c1', prompt: 'poll' }, { id: 'c2', prompt: 'poll' }] })
+  await clock.advance(IDLE_AFTER_MS)
+  expect(seen.toasts[0]).toMatch(/holding 2 waits \(2 wake-ups\)/)
+})
+
+test('a session whose environment cannot be set stays quiet and still starts', ON, async ($, on) => {
+  const { clock, seen, stop } = world(on, { envFails: true })
+  await start($)
+  await stop($, { tasks: [{ id: 'ef-1', type: 'shell' }] })
+  await clock.advance(IDLE_AFTER_MS + MINUTE)
+  expect(seen.runs).toEqual([])
 })
 
 for (const [name, s, isInteractive] of [
@@ -188,7 +239,7 @@ test('a refused command.run falls back to a prompt, then the toast', ON, async (
   await stop($, { tasks: [{ id: 'rf-1', type: 'workflow' }] })
   await clock.advance(IDLE_AFTER_MS)
   expect(seen.runs).toEqual(['nudgewhen:idle-check'])
-  expect(seen.submits).toEqual(['Run the idle check: /nudgewhen:idle-check'])
+  expect(seen.submits).toEqual(['Use the nudgewhen:idle-check skill now.'])
   expect(seen.toasts.at(-1)).toMatch(/run \/nudgewhen:idle-check$/)
 })
 
@@ -199,7 +250,7 @@ test('reportedWaits reads nothing from a missing or broken report', () => {
     ['null', 0],
     ['{"session_id":"s","background_tasks":[{"id":"a","type":"shell"},{"id":1},null]}', 1],
   ]
-  for (const [text, want] of rows) expect(reportedWaits(text, 's', new Set()).length).toBe(want)
+  for (const [text, want] of rows) expect(reportedWaits(text, 's', new Set())?.length ?? 0).toBe(want)
 })
 
 test('pickCommand prefers the person\'s own idle-check', () => {
@@ -208,6 +259,7 @@ test('pickCommand prefers the person\'s own idle-check', () => {
   const rows: [CommandInfo[], string | undefined][] = [
     [[PLUGIN_CMD, own], 'idle-check'],
     [[PLUGIN_CMD, other], 'nudgewhen:idle-check'],
+    [[{ name: 'idle-check', description: '', source: 'plugin', plugin: 'nudgewhen' }], 'nudgewhen:idle-check'],
     [[other], undefined],
     [[], undefined],
   ]

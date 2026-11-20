@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -z \"$NUDGEWHEN_IDLE_FILE\" ] || { umask 077; cat > \"$NUDGEWHEN_IDLE_FILE\"; }; exit 0",
+            "command": "[ -z \"$NUDGEWHEN_IDLE_DIR\" ] || { umask 077; t=\"$NUDGEWHEN_IDLE_DIR/.nudgewhen-idle.$$\"; cat > \"$t\" && id=$(sed -n 's/^.*\"session_id\" *: *\"\\([A-Za-z0-9_-][A-Za-z0-9_-]*\\)\".*$/\\1/p' \"$t\" | head -n 1) && [ -n \"$id\" ] && mv \"$t\" \"$NUDGEWHEN_IDLE_DIR/nudgewhen-idle-$id.json\" || rm -f \"$t\"; }; exit 0",
             "timeout": 5
           }
         ]

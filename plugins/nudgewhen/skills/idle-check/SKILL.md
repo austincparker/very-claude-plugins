@@ -1,6 +1,6 @@
 ---
 name: idle-check
-description: Asks whether this session truly needs to sit idle, hands off every wait a script can finish, and says whether the session can close. Use on "idle check", "/idle-check", "does this session need to stay open", and before ending a turn to wait on background work, CI, a deploy or a merge.
+description: Use when nudgewhen reports the session idle while holding background work, or when asked for an "idle check", "/idle-check" or whether the session needs to stay open.
 ---
 
 # Idle check
@@ -9,7 +9,7 @@ Is it absolutely necessary for this session to sit idle? Answer it wait by wait.
 
 ## 1. List every wait
 
-Background shells, agents and teammates, workflows, monitors, crons, wake-ups and loops, and anything outside the session you mean to check back on: CI, a deploy, a merge queue, another worker. One line each: what it waits for, and what happens after.
+Background shells, agents and teammates, workflows, monitors, crons, wake-ups and loops, and anything outside the session you mean to check back on: CI, a deploy, a merge queue, another worker. One line each: what it waits for, and what happens after. If nothing is waiting, end with `Can close: 0 waits.` and stop.
 
 ## 2. Still wanted?
 

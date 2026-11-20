@@ -1,6 +1,6 @@
 import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 
-import { registerIdle } from './idle'
+import { endIdle, registerIdle } from './idle'
 import { MINUTE, USAGE, afterFiring, describe, hourLabel, isBedtime, parseWhen, span } from './schedule'
 import type { Nudge } from './schedule'
 import { SAMPLE_MS, isSampler, localStamp, num, readLog, readSit, report, satMinutes, step } from './sitting'
@@ -337,6 +337,7 @@ export const register: Register = (on, options) => {
   on('session.end', async ($, e, next) => {
     state.stop?.()
     state.stop = undefined
+    await endIdle($)
     return next(e)
   })
 
