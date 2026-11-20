@@ -34,7 +34,7 @@ import {
 } from './hosted'
 import { KINDS as LINE_KINDS, LINES_MAX, kindForSource, render, parseLine, pickLine, readLines, readTone } from './lines'
 import type { Kind, Line, Tone } from './lines'
-import { SESSION_ID, isLauncher, register as registerStatusLine, segmentFile, stateDir } from './statusline'
+import { SESSION_ID, carried, register as registerStatusLine, segmentFile, stateDir } from './statusline'
 import { TITLES_MAX, cleanTitle, isGhostty, parseTitleArgs, readTitlesOn, titleArgv, ttyPath } from './titles'
 import { MINUTE, USAGE, afterFiring, clock, dayHint, describe, parseWhen, span } from './schedule'
 import type { Nudge } from './schedule'
@@ -482,12 +482,8 @@ function shownFired($: EngineInterface, now: number): Promise<Fired[]> {
 }
 
 /** Whether the settings run the plugin's launcher as the status line. */
-async function hasLauncher($: EngineInterface): Promise<boolean> {
-  try {
-    return isLauncher(await $.settings.read({ key: 'statusLine' }))
-  } catch {
-    return false
-  }
+async function hasLauncher(_$: EngineInterface): Promise<boolean> {
+  return carried.value
 }
 
 async function onTerminal($: EngineInterface): Promise<boolean> {
@@ -659,6 +655,10 @@ async function statuslineCommand($: EngineInterface, arg: string): Promise<strin
   if (arg !== '') return STATUSLINE_USAGE
   if (await hasLauncher($)) return `The nudgewhen status line launcher is carried by Claude Code's status line.\n${STATUSLINE_USAGE}`
   const policy = await $.settings.read({ source: 'policy' }).catch(() => ({}) as Record<string, unknown>)
+  const mode = state.options.status_line
+  if (policy.statusLine === undefined && (mode === 'wrap' || mode === 'only')) {
+    return `status_line is ${mode}, but Claude Code skipped nudgewhen's settings hook in this session (its built-in guard; the debug log says settings.read bypassed by cc-plugin-sec-default), so your own status line stays.\n${STATUSLINE_USAGE}`
+  }
   const why = policy.statusLine !== undefined ? 'managed policy sets statusLine, which nudgewhen never replaces' : 'status_line is off'
   return `The launcher is not carried: ${why}.\n${STATUSLINE_USAGE}`
 }

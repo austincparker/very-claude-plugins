@@ -93,12 +93,19 @@ export function answer(layers: readonly SettingsLayer[], prior: Readonly<Obj>, r
   }
 }
 
+/**
+ * Whether the latest whole settings read the hook saw was answered with the launcher. The plugin's own reads
+ * never reach its hook (re-entry), so this is the only way the plugin learns what the engine's merge holds.
+ */
+export const carried = { value: false }
+
 export const register: Register = on => {
   on('settings.read', async ($, e, next) => {
     if (e.source !== undefined) return next(e)
     const r = await next(e)
     if ('deny' in r) return r
     const out = answer(e.layers, r.value, $.plugin.root)
+    carried.value = out !== null
     return out === null ? r : { value: out }
   })
 }

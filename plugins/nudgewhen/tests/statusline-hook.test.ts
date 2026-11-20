@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { answer, b64 as encode, readMode, register } from '../hooks/statusline'
+import { answer, b64 as encode, carried, readMode, register, segmentFile, stateDir } from '../hooks/statusline'
 
 const ROOT = '/plug ins/nudgewhen'
 const STATE = '${CLAUDE_CONFIG_DIR:-$HOME/.claude}/nudgewhen/status'
@@ -114,4 +114,37 @@ test('the hook passes a read of one source, a deny and an empty layer list throu
   expect(await run({ source: 'user', layers: [cfg('wrap')] }, next)).toEqual({ value: { model: 'm' } })
   expect(await run({ layers: [cfg('wrap')] }, () => ({ deny: 'no' }))).toEqual({ deny: 'no' })
   expect(await run({ layers: [] }, next)).toEqual({ value: { model: 'm' } })
+})
+
+test('the hook sets carried true for a whole read with status_line wrap', async () => {
+  carried.value = false
+  await hook()({ layers: [cfg('wrap')] }, () => ({ value: {} }))
+  expect(carried.value).toBe(true)
+})
+
+test('the hook sets carried false when the policy layer holds statusLine', async () => {
+  carried.value = true
+  const policy: SettingsLayer = { source: 'policy', settings: { statusLine: { type: 'command', command: 'x' } } }
+  await hook()({ layers: [cfg('wrap'), policy] }, () => ({ value: {} }))
+  expect(carried.value).toBe(false)
+})
+
+test('a read of one source leaves carried alone', async () => {
+  carried.value = true
+  await hook()({ source: 'user', layers: [] }, () => ({ value: {} }))
+  expect(carried.value).toBe(true)
+  carried.value = false
+  await hook()({ source: 'user', layers: [cfg('wrap')] }, () => ({ value: {} }))
+  expect(carried.value).toBe(false)
+})
+
+test('the segment file is the header, the list, then one tab row per segment with text', () => {
+  const rows: [string, string][] = [['breaks', 'breaks 0'], ['dir', ''], ['nudge', 'a\tb\nc']]
+  expect(segmentFile(1000, 'breaks,dir,nudge', rows)).toBe('v1 1000\nbreaks,dir,nudge\nbreaks\tbreaks 0\nnudge\ta b c\n')
+})
+
+test('the state dir is under CLAUDE_CONFIG_DIR, else HOME, else none', () => {
+  expect(stateDir('/cfg', '/h')).toBe('/cfg/nudgewhen/status')
+  expect(stateDir('', '/h')).toBe('/h/.claude/nudgewhen/status')
+  expect(stateDir(undefined, undefined)).toBe(null)
 })
