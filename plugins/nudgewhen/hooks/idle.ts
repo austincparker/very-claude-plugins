@@ -56,7 +56,10 @@ export function pluginNudgeCommand<D extends string>(descriptor: D): `nudgewhen:
   return `${PLUGIN}:${nudgeCommand(descriptor)}`
 }
 
-/** For a nudge of the given descriptor: the person's own `<descriptor>-nudge` first, then any extra names of their own in order, then this plugin's, listed bare or with its plugin prefix. "Own" means a command whose `source` is exactly `user`, which the host's `CommandSource` (`'builtin' | 'plugin' | 'user' | 'mcp'`) documents as "the user's or project's own file"; a plugin, MCP or built-in command never takes that slot. */
+/**
+ * The command a nudge of this descriptor runs: the person's own `<descriptor>-nudge`, then each of `ownFallbacks` in order, then this plugin's, listed bare or with its prefix.
+ * "Own" means a command whose `source` is exactly `user`; a plugin, MCP or built-in command never takes that slot.
+ */
 export function pickNudgeCommand(cmds: readonly CommandInfo[], descriptor: string, ownFallbacks: readonly string[] = []): string | undefined {
   const own = nudgeCommand(descriptor)
   for (const name of [own, ...ownFallbacks]) if (cmds.some(c => c.name === name && c.source === 'user')) return name
@@ -182,6 +185,10 @@ async function nudge($: EngineInterface, gen: number) {
   const nudged = idle.nudged
   const head = `nudgewhen: idle, holding ${summary(due)}`
   for (const w of due) idle.nudged.add(w.key)
+  // Nothing ran for these waits yet: let the next turn's check count them again.
+  const unmark = () => {
+    if (nudged === idle.nudged) for (const w of due) nudged.delete(w.key)
+  }
   if (cmd === undefined) {
     $.ui.toast(`${head}; run /${PLUGIN_COMMAND}`, { timeoutMs: 15_000 })
     return
@@ -193,15 +200,17 @@ async function nudge($: EngineInterface, gen: number) {
   } catch (err) {
     $.ui.log(`nudgewhen idle: command.run: ${String(err)}`, { to: 'debug' })
   }
-  if (gen !== idle.gen) return
+  if (gen !== idle.gen) {
+    unmark()
+    return
+  }
   try {
     // The host refuses a submitted prompt that begins with a slash.
     await $.prompt.submit({ text: `Use the ${cmd} skill now.` })
   } catch (err) {
     $.ui.log(`nudgewhen idle: prompt.submit: ${String(err)}`, { to: 'debug' })
-    // Nothing ran: leave these waits for the next turn's check.
-    if (gen === idle.gen && nudged === idle.nudged) for (const w of due) nudged.delete(w.key)
-    $.ui.toast(`nudgewhen: could not start it; run /${cmd}`, { timeoutMs: 15_000 })
+    unmark()
+    if (gen === idle.gen) $.ui.toast(`nudgewhen: could not start it; run /${cmd}`, { timeoutMs: 15_000 })
   }
 }
 

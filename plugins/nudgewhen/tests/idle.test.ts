@@ -409,3 +409,55 @@ test('pickNudgeCommand orders extra own names and never takes a plugin command a
   expect(pickNudgeCommand([b, a], 'bedtime', ['old-a', 'old-b'])).toBe('old-a')
   expect(pickNudgeCommand([asPlugin], 'bedtime', ['old-a'])).toBeUndefined()
 })
+
+test('an other-source idle-check or idle-nudge never counts as the person\'s own', () => {
+  const sources = ['plugin', 'mcp', 'builtin'] as const
+  for (const source of sources) {
+    for (const name of ['idle-nudge', 'idle-check']) {
+      expect(pickCommand([PLUGIN_CMD, { name, description: '', source }])).toBe('nudgewhen:idle-nudge')
+    }
+  }
+})
+
+test('a person\'s idle-nudge outranks their idle-check, with or without the plugin command listed', () => {
+  expect(pickCommand([USER_CHECK, USER_NUDGE])).toBe('idle-nudge')
+  expect(pickCommand([PLUGIN_CMD, USER_CHECK, USER_NUDGE])).toBe('idle-nudge')
+  expect(pickCommand([USER_CHECK])).toBe('idle-check')
+})
+
+test('a stale plugin idle-check next to the plugin idle-nudge runs the idle-nudge', ON, async ($, on) => {
+  const { clock, seen, stop } = world(on, { commands: [STALE_PLUGIN, PLUGIN_CMD] })
+  await start($)
+  await stop($, { tasks: [{ id: 'up-1', type: 'shell' }] })
+  await clock.advance(IDLE_AFTER_MS)
+  expect(seen.runs).toEqual(['nudgewhen:idle-nudge'])
+})
+
+test('a bare plugin idle-nudge runs by its prefixed name, and the prompt fallback names it', ON, async ($, on) => {
+  const bare: CommandInfo = { name: 'idle-nudge', description: '', source: 'plugin', plugin: 'nudgewhen' }
+  const { clock, seen, stop } = world(on, { commands: [bare], runFails: true })
+  await start($)
+  await stop($, { tasks: [{ id: 'bp-1', type: 'shell' }] })
+  await clock.advance(IDLE_AFTER_MS)
+  expect(seen.runs).toEqual(['nudgewhen:idle-nudge'])
+  expect(seen.submits).toEqual(['Use the nudgewhen:idle-nudge skill now.'])
+})
+
+test('a person\'s own idle-nudge falls back to a prompt naming it, with both of their skills listed', ON, async ($, on) => {
+  const { clock, seen, stop } = world(on, { commands: [PLUGIN_CMD, USER_CHECK, USER_NUDGE], runFails: true })
+  await start($)
+  await stop($, { tasks: [{ id: 'on-1', type: 'shell' }] })
+  await clock.advance(IDLE_AFTER_MS)
+  expect(seen.submits).toEqual(['Use the idle-nudge skill now.'])
+})
+
+test('waits whose command.run and prompt.submit both fail are nudged again at the next turn's check', ON, async ($, on) => {
+  const { clock, seen, stop } = world(on, { runFails: true, submitFails: true })
+  await start($)
+  await stop($, { tasks: [{ id: 'sup-1', type: 'shell' }] })
+  await clock.advance(IDLE_AFTER_MS)
+  expect(seen.runs.length).toBe(1)
+  await stop($, { tasks: [{ id: 'sup-1', type: 'shell' }] })
+  await clock.advance(IDLE_AFTER_MS)
+  expect(seen.runs.length).toBe(2)
+})
