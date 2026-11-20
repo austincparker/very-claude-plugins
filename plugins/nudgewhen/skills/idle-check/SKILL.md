@@ -1,19 +1,19 @@
 ---
 name: idle-check
-description: Use when nudgewhen reports the session idle while holding background work, or when asked for an "idle check", "/idle-check" or whether the session needs to stay open.
+description: This skill should be used when nudgewhen reports the session idle while holding background work, or when asked for an "idle check" or whether the session needs to stay open.
 ---
 
 # Idle check
 
-Is it absolutely necessary for this session to sit idle? Answer it wait by wait.
+Decide whether it is necessary for this session to sit idle, wait by wait.
 
 ## 1. List every wait
 
-Background shells, agents and teammates, workflows, monitors, crons, wake-ups and loops, and anything outside the session you mean to check back on: CI, a deploy, a merge queue, another worker. One line each: what it waits for, and what happens after. If nothing is waiting, end with `Can close: 0 waits.` and stop.
+Background shells, agents and teammates, workflows, monitors, crons, wake-ups and loops, and anything outside the session that the session intends to check back on: CI, a deploy, a merge queue, another worker. One line each: what it waits for, and what happens after. If nothing is waiting, end with `Can close: 0 waits.` and stop.
 
 ## 2. Still wanted?
 
-For each wait, check its result will still be used when it lands: the base branch has not moved under it, the commit is not superseded, the PR is still open. Cancel or restart a stale one.
+For each wait, check that its result will still be used when it lands: the base branch has not moved under it, the commit is not superseded, the PR is still open. Cancel or restart a stale one.
 
 ## 3. Decide
 
@@ -21,10 +21,11 @@ A wait needs this session only when the step after it needs judgment that cannot
 
 ## 4. Hand off the mechanical ones
 
-Give each to a detached owner that outlives the session: a `nohup` or `setsid` script with a log, a terminal tab or multiplexer window, a system scheduler, CI or a hosted job, or the forge's auto-merge behind required checks. Never a background shell or in-process agent of this session; they die with it.
+Give each to a detached owner that outlives the session: a `nohup` or `setsid` script with a log, a terminal tab or multiplexer window, a system scheduler, CI or a hosted job, or the forge's auto-merge behind required checks. Never use a background shell or in-process agent of this session; both end with it. When the host offers no detached owner, keep the wait and report it as `Needs me`.
 
 - The owner runs every gate the session would have run, in order, and stops and records on any failure.
 - Start the owner first and confirm it runs (its pid, its first log line). Then stop the in-session copy: stop the task, delete the cron.
+- When a nudge started this run, it already listed the waits in its toast; start from that list and confirm each against the session's own tasks.
 
 ## 5. Record
 
