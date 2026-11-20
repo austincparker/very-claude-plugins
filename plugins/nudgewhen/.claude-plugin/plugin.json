@@ -2,9 +2,7 @@
   "name": "nudgewhen",
   "version": "0.3.0",
   "description": "Nudges in Claude Code: take a break, go to bed, and any reminder you set with /nudge or by asking Claude.",
-  "author": {
-    "name": "Austin Parker"
-  },
+  "author": { "name": "Austin Parker" },
   "license": "MIT",
   "userConfig": {
     "sit_minutes": {

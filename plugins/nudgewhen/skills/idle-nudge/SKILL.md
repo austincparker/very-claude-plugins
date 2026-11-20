@@ -1,6 +1,6 @@
 ---
 name: idle-nudge
-description: This skill should be used when nudgewhen reports the session idle while holding background work ("Use the nudgewhen:idle-nudge skill now."), or when asked for an "idle nudge", an "idle check", "is it necessary to sit idle", "does this session need to stay open", or before ending a turn to wait on CI, a deploy, a merge queue, an agent or a scheduled wake-up.
+description: This skill should be used when nudgewhen reports the session idle while holding background work ("Use the nudgewhen:idle-nudge skill now."), or when asked for an "idle nudge", "is it necessary to sit idle", "does this session need to stay open", or before ending a turn to wait on CI, a deploy, a merge queue, an agent or a scheduled wake-up.
 ---
 
 # Idle nudge
