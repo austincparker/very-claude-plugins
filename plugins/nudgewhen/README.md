@@ -5,6 +5,7 @@ Nudges inside Claude Code: take a break, go to bed, and any reminder you set.
 - **Break nudges.** The status line counts how long you've been at the keyboard and says `stand up` at twice your limit. Launching an agent after a long sit pops a toast: the agent has this, go walk.
 - **Bedtime.** Past your bedtime the status line says it's time to wrap up.
 - **Your own nudges.** `/nudge in 20m check the deploy`, or ask Claude: "remind me at 5pm to send the invoice." Due nudges show as a toast, in the status line and as a terminal notification (a desktop banner in terminals that send one).
+- **Idle check.** A session left holding background work can ask itself whether it needs to stay open, and hand off what a script can finish. Off by default.
 
 ## Install
 
@@ -34,7 +35,7 @@ Claude gets a `nudge` tool that sets, lists and cancels nudges one at a time, so
 
 ## Settings
 
-Install asks for these; change them later in `/config`.
+Install asks for these; change them later in `/config`. **Nudge sessions when idle?** takes effect when the next session starts.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -47,6 +48,7 @@ Install asks for these; change them later in `/config`.
 | Work days (`work_days`) | empty | `mon,tue,...`; break nudges only run on these days |
 | Quiet hours (`quiet_hours`) | empty | `HH:MM-HH:MM`; no toasts or notifications, the status line still shows |
 | Status line segments (`status_segments`) | `sit,bed,hosted` | what the status line shows, in order |
+| Nudge sessions when idle? (`idle_nudge`) | off | run the idle check when a session sits idle holding background work |
 
 An invalid time, range or day list falls back to its default and a toast says so once. Empty means always (work hours, work days) or none (quiet hours). Times are 24-hour and local; ranges may cross midnight.
 
@@ -146,6 +148,18 @@ What a mod cannot read, so only your own `statusLine` command can show it:
 On macOS it reads the system idle time (`ioreg`), on Linux `xprintidle` when installed, and otherwise the time since your last prompt. Five minutes with no keyboard or mouse input counts as a break. Nothing leaves your machine except what you set for hosted nudges while connected: quiet hours, a pause time, your time zone and muted repos go to the hosted server. Locally, some data is written down in Claude Code's plugin store: your nudges, the text of nudges that fired in the last ten minutes, and a sitting log (one row per sit and per break, minute resolution, kept 90 days and at most 5000 rows). `/nudge forget` clears the log and the fired-nudge text. A gap with no session open counts as a break, so hours of work with Claude Code closed read as one.
 
 Nudges fire while a Claude Code session is open. One that came due while none was open fires at the next session, marked late.
+
+## Idle check
+
+The `nudgewhen:idle-check` skill asks whether the session truly needs to sit idle. It lists what the session waits on, hands off to a detached script or job whatever needs no judgment, and ends with one line: the session can close, or what still needs it. Run it by hand anytime.
+
+Turn on **Nudge sessions when idle?** and nudgewhen runs it for you. When Claude ends a turn still holding waits and you send no prompt for two minutes, it runs the check. Waits are background shells, agents, workflows, monitors Claude started, and scheduled wake-ups. It runs once per wait: the same waits never trigger it twice, a new one does. A draft in your prompt box holds it off a minute at a time, for up to five minutes. A skill of your own named `idle-check` takes precedence over the plugin's.
+
+It needs plugin hooks turned on, since it reads Claude Code's own end-of-turn report of background work; with hooks off it finds no report and does nothing. The report goes to a private temporary directory made for the session and is deleted when the session ends. With the setting off, the plugin's Stop hook still starts a shell at the end of each turn, and the shell exits at once without writing anything. The check runs a turn, which uses your usage, so the setting is off by default.
+
+## Development
+
+`claude plugin test plugins/nudgewhen` runs the unit tests. It cannot start processes, so run `sh plugins/nudgewhen/tests/stop-hook.sh` as well to check the Stop hook command in `hooks/hooks.json`.
 
 ## License
 

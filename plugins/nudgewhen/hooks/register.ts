@@ -36,6 +36,7 @@ import { KINDS as LINE_KINDS, LINES_MAX, kindForSource, render, parseLine, pickL
 import type { Kind, Line, Tone } from './lines'
 import { TITLES_MAX, cleanTitle, isGhostty, parseTitleArgs, readTitlesOn, titleArgv, ttyPath } from './titles'
 import { MINUTE, USAGE, afterFiring, clock, dayHint, describe, parseWhen, span } from './schedule'
+import { endIdle, registerIdle } from './idle'
 import type { Nudge } from './schedule'
 import {
   DEFAULT_SEGMENTS,
@@ -926,6 +927,7 @@ export const register: Register = (on, options) => {
   state.cfg = read.cfg
   state.options = { ...options }
   state.warnings = read.warnings
+  registerIdle(on, options)
 
   on('session.start', async ($, e, next) => {
     state.sessionId = await $.session.id()
@@ -964,6 +966,7 @@ export const register: Register = (on, options) => {
     state.cloudRun = undefined
     state.statusRun = undefined
     setHosted(undefined)
+    await endIdle($).catch(() => undefined)
     return next(e)
   })
 
