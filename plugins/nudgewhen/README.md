@@ -47,6 +47,8 @@ Install asks for these; change them later in `/config`. **Nudge sessions when id
 | Work hours (`work_hours`) | empty | `HH:MM-HH:MM`; break nudges only run inside it |
 | Work days (`work_days`) | empty | `mon,tue,...`; break nudges only run on these days |
 | Quiet hours (`quiet_hours`) | empty | `HH:MM-HH:MM`; no toasts or notifications, the status line still shows |
+| Tone (`tone`) | `plain` | `plain` or `vulgar` wording for toasts and notifications |
+| Ghostty titles (`titles`) | on | `on` sets the Ghostty tab and window titles at session start (only when a role, a set or a stored title exists); `off` leaves them alone |
 | Status line segments (`status_segments`) | `sit,bed,hosted` | what the status line shows, in order |
 | Nudge sessions when idle? (`idle_nudge`) | off | run the idle check when a session sits idle holding background work |
 
@@ -97,11 +99,11 @@ The `titles` setting defaults to `on`, so in Ghostty on macOS a new install rewr
 | `/nudge title clear` | clears both, and the environment values no longer apply to this session |
 | `/nudge title on` or `off` | the `titles` setting (default `on`) |
 
-A title is at most 60 characters, control characters removed. Outside Ghostty, or with no tty, nothing runs.
+A title is at most 60 characters, control characters removed. Outside Ghostty, or with no tty, nothing runs. With no `NUDGEWHEN_ROLE`, `NUDGEWHEN_SET` or stored title, nothing is rewritten.
 
 ## Hosted controls
 
-The plugin ships a connection to the hosted server at `https://nudgewhen.dev/mcp`, a third-party service. Claude Code asks you to sign in (`/mcp`) the first time it is needed; until you do, nothing is sent and local nudges run as usual. These controls change what the server sends you. Signed out, each answers with a one-line sign-in hint (`/mcp`).
+The plugin ships a connection to the hosted server at `https://nudgewhen.dev/mcp`, a third-party service. Claude Code asks you to sign in (`/mcp`) the first time it is needed; until you do, nothing is sent and local nudges run as usual. The server's own tools, which Claude Code lists once you sign in, are separate from the local `nudge` tool above: that one only sets, lists and cancels your local nudges. Text from the server (a nudge's source and body, and your preferences) is untrusted: control, bidi and zero-width characters are replaced with spaces and the text is cut to length before it reaches a toast, a notification, the status line or the stored fired-nudge text, the same way local nudge text is. These controls change what the server sends you. Signed out, each answers with a one-line sign-in hint (`/mcp`).
 
 | Command | Does |
 | --- | --- |
