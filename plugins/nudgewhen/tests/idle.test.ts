@@ -374,6 +374,34 @@ test('a stale or foreign plugin command alone runs nothing and toasts the hint',
   expect(seen.toasts.at(-1)).toMatch(/run \/nudgewhen:idle-nudge$/)
 })
 
+test('a stale plugin idle-check alone runs nothing and toasts the hint', ON, async ($, on) => {
+  const { clock, seen, stop } = world(on, { commands: [STALE_PLUGIN] })
+  await start($)
+  await stop($, { tasks: [{ id: 'sp-1', type: 'shell' }] })
+  await clock.advance(IDLE_AFTER_MS)
+  expect(seen.runs).toEqual([])
+  expect(seen.submits).toEqual([])
+  expect(seen.toasts.at(-1)).toMatch(/run \/nudgewhen:idle-nudge$/)
+})
+
+test('a failed legacy idle-check names that command in the last toast, after one submit', ON, async ($, on) => {
+  const { clock, seen, stop } = world(on, { commands: [PLUGIN_CMD, USER_CHECK], runFails: true, submitFails: true })
+  await start($)
+  await stop($, { tasks: [{ id: 'lf-1', type: 'shell' }] })
+  await clock.advance(IDLE_AFTER_MS)
+  expect(seen.submits).toEqual(['Use the idle-check skill now.'])
+  expect(seen.toasts.at(-1)).toMatch(/run \/idle-check$/)
+})
+
+test('a failed plugin idle-nudge names the prefixed command in the last toast', ON, async ($, on) => {
+  const { clock, seen, stop } = world(on, { commands: [PLUGIN_CMD], runFails: true, submitFails: true })
+  await start($)
+  await stop($, { tasks: [{ id: 'pf-1', type: 'shell' }] })
+  await clock.advance(IDLE_AFTER_MS)
+  expect(seen.submits).toEqual(['Use the nudgewhen:idle-nudge skill now.'])
+  expect(seen.toasts.at(-1)).toMatch(/run \/nudgewhen:idle-nudge$/)
+})
+
 test('pickNudgeCommand orders extra own names and never takes a plugin command as one', () => {
   const a: CommandInfo = { name: 'old-a', description: '', source: 'user' }
   const b: CommandInfo = { name: 'old-b', description: '', source: 'user' }

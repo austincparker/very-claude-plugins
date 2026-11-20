@@ -7,10 +7,28 @@ here=$(cd "$(dirname "$0")" && pwd)
 cmd=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["hooks"]["Stop"][0]["hooks"][0]["command"])' "$here/../hooks/hooks.json")
 grep -q "NUDGEWHEN_IDLE_DIR" "$here/../hooks/idle.ts"
 grep -q -F "nudgewhen-idle-\${idle.sessionId}.json" "$here/../hooks/idle.ts"
-# The shipped skill's directory and name must match pluginNudgeCommand('idle') in idle.ts.
-grep -q '^name: idle-nudge$' "$here/../skills/idle-nudge/SKILL.md"
-grep -q "pluginNudgeCommand(DESCRIPTOR)" "$here/../hooks/idle.ts"
-grep -q "^const DESCRIPTOR = 'idle'" "$here/../hooks/idle.ts"
+# The shipped skill's name must match its directory, and the runtime test's plugin command must be <plugin>:<skill name>.
+skill_dir="$here/../skills"
+[ "$(ls "$skill_dir" | wc -l | tr -d ' ')" = "1" ] || { echo "FAIL: expected one skill in $skill_dir" >&2; exit 1; }
+skill=$(ls "$skill_dir")
+grep -q "^name: $skill\$" "$skill_dir/$skill/SKILL.md" || { echo "FAIL: SKILL.md name is not $skill" >&2; exit 1; }
+case "$skill" in *-nudge) ;; *) echo "FAIL: skill $skill is not named <descriptor>-nudge" >&2; exit 1 ;; esac
+plugin=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$here/../.claude-plugin/plugin.json")
+grep -q -F "Use the $plugin:$skill skill now." "$skill_dir/$skill/SKILL.md" || { echo "FAIL: SKILL.md description lacks the prompt for $plugin:$skill" >&2; exit 1; }
+grep -q -F "name: '$plugin:$skill'" "$here/idle.test.ts" || { echo "FAIL: idle.test.ts has no command $plugin:$skill" >&2; exit 1; }
+# The version in plugin.json is the top CHANGELOG entry; the idle-check fallback goes in 0.4.0.
+version=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$here/../.claude-plugin/plugin.json")
+top=$(sed -n 's/^## \[\(.*\)\].*/\1/p' "$here/../CHANGELOG.md" | head -1)
+[ "$top" = "$version" ] || { echo "FAIL: plugin.json $version, CHANGELOG top $top" >&2; exit 1; }
+minor=$(printf '%s' "$version" | cut -d. -f2)
+major=$(printf '%s' "$version" | cut -d. -f1)
+if [ "$major" -gt 0 ] || [ "$minor" -ge 4 ]; then
+  ! grep -q "LEGACY_COMMAND" "$here/../hooks/idle.ts" || { echo "FAIL: the idle-check fallback was due out in 0.4.0" >&2; exit 1; }
+fi
+# When this CLI has it, the supported check that the manifest and skill frontmatter parse.
+if command -v claude >/dev/null 2>&1 && claude plugin validate --help >/dev/null 2>&1; then
+  claude plugin validate "$here/.." >/dev/null || { echo "FAIL: claude plugin validate" >&2; exit 1; }
+fi
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 fail() { echo "FAIL: $1" >&2; exit 1; }
