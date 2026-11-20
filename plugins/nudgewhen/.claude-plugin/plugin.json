@@ -56,7 +56,7 @@
     "work_days": {
       "type": "string",
       "title": "Work days",
-      "description": "Break nudges only run on these days, a comma list of mon, tue, wed, thu, fri, sat, sun. Empty means every day.",
+      "description": "Break nudges only run on these days, a comma list of mon, tue, wed, thu, fri, sat, sun, or weekday. Empty means every day.",
       "default": ""
     },
     "quiet_hours": {

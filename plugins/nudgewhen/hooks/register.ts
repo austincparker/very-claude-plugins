@@ -80,6 +80,7 @@ const TOOL_DESCRIPTION = [
   "Sets, lists or cancels the person's nudges: reminders that show in Claude Code and as a desktop notification when due.",
   'Use it when they ask to be reminded or nudged later.',
   "`when` takes 'in 20m', 'in 1h30m', 'at 17:30', 'at 5pm', 'every 45m', 'every day at 9:00', 'every weekday at 9:00' or 'every mon,wed,fri at 9:00', with `text` saying what to nudge about.",
+  '`when` and `text` go together: pass both to set a nudge.',
   "Pass `cancel` with a nudge's id to cancel that one; cancelling them all is the person's own /nudge cancel all. Pass nothing to list the nudges.",
 ].join(' ')
 
@@ -101,6 +102,7 @@ const fresh = () => ({
   options: {} as PluginOptions,
   isPrompting: false,
   stop: undefined as (() => void) | undefined,
+  inflight: new Set<Promise<unknown>>(),
   queue: Promise.resolve() as Promise<unknown>,
 })
 const state = fresh()
@@ -112,12 +114,20 @@ function locked<T>(fn: () => Promise<T>): Promise<T> {
   return next
 }
 
+/** Keeps `p` in `state.inflight` until it settles, so session end can wait for it. */
+function track<T>(p: Promise<T>): Promise<T> {
+  state.inflight.add(p)
+  const done = () => void state.inflight.delete(p)
+  p.then(done, done)
+  return p
+}
+
 function config(options: PluginOptions): { cfg: Config; warnings: string[] } {
   const n = (key: string, fallback: number) => {
     const v = options[key]
     return typeof v === 'number' ? v : fallback
   }
-  // One-release alias: 0.3.0's whole-hour bedtime_hour and wake_hour carry over while bedtime and wake still hold their defaults.
+  // A saved whole-hour bedtime_hour or wake_hour counts as that hour while bedtime or wake still holds its default.
   const hour = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 23 ? `${String(v).padStart(2, '0')}:00` : undefined)
   const carried: PluginOptions = { ...options }
   const oldBed = hour(options.bedtime_hour)
@@ -254,16 +264,45 @@ async function say($: EngineInterface, kind: Kind, vars: { minutes?: number; tex
   return render(pickLine(lines, kind, vars), vars)
 }
 
+/** Puts nudges taken for showing but never shown back in the store, so the next tick shows them. */
+function restoreDue($: EngineInterface, unshown: Nudge[], at: number): Promise<void> {
+  const ids = new Set(unshown.map(n => n.id))
+  return locked(async () => {
+    const have = readNudges(await $.store.get('nudges'))
+    const present = new Set(have.map(n => n.id))
+    await $.store.set('nudges', [...have, ...unshown.filter(n => !present.has(n.id))])
+    await $.store.set('fired', readFired(await $.store.get('fired')).filter(f => !(f.at === at && ids.has(f.id))))
+  })
+}
+
 async function fireDue($: EngineInterface) {
-  const now = await $.clock.now()
-  if (await isHeldNow($, now)) return
-  const due = await locked(() => takeDue($, now))
-  for (const n of due) {
-    const late = now - n.due > 2 * MINUTE ? ` (due ${span(now - n.due)} ago)` : ''
-    const line = await say($, 'reminder', { text: `${n.text}${late}` })
-    $.ui.toast(line ?? `nudge: ${n.text}${late}`, { timeoutMs: 15_000 })
-    $.ui.notify(line ?? `${n.text}${late}`, { title: 'nudgewhen' }).catch(() => undefined)
+  const stop = state.stop
+  const isLive = () => state.stop === stop
+  const at = { now: 0 }
+  const due = await locked(async () => {
+    const now = await $.clock.now()
+    if (!isLive() || (await isHeldNow($, now))) return []
+    at.now = now
+    return takeDue($, now)
+  })
+  const now = at.now
+  let shown = 0
+  try {
+    for (const n of due) {
+      if (!isLive() || (await isHeldNow($, await $.clock.now()))) break
+      await showDue($, n, now)
+      shown += 1
+    }
+  } finally {
+    if (shown < due.length) await restoreDue($, due.slice(shown), now)
   }
+}
+
+async function showDue($: EngineInterface, n: Nudge, now: number) {
+  const late = now - n.due > 2 * MINUTE ? ` (due ${span(now - n.due)} ago)` : ''
+  const line = await say($, 'reminder', { text: `${n.text}${late}` })
+  $.ui.toast(line ?? `nudge: ${n.text}${late}`, { timeoutMs: 15_000 })
+  $.ui.notify(line ?? `${n.text}${late}`, { title: 'nudgewhen' }).catch(() => undefined)
 }
 
 /** `p`, or a rejection once `CALL_TIMEOUT_MS` passes: a hung server never holds the tick. */
@@ -320,10 +359,10 @@ async function ackAll($: EngineInterface, server: string, ids: string[], isLive:
 }
 
 /** Records the outcome of one attempt; returns the nudges to show now. */
-function settle($: EngineInterface, got: Attempt): Promise<{ fresh: HostedNudge[]; ack: string[]; at: number }> {
+function settle($: EngineInterface, got: Attempt, isLive: () => boolean): Promise<{ fresh: HostedNudge[]; ack: string[]; at: number }> {
   return locked(async () => {
     const now = await $.clock.now()
-    if (!(await ownsFiring($, now))) return { fresh: [], ack: [], at: now }
+    if (!isLive() || !(await ownsFiring($, now))) return { fresh: [], ack: [], at: now }
     const fails = 'nudges' in got ? 0 : (num(await $.store.get('cloudFails')) ?? 0) + 1
     const wasUp = (await $.store.get('cloudUp')) !== false
     await $.store.set('cloudFails', fails)
@@ -366,21 +405,21 @@ function unmark($: EngineInterface, unshown: HostedNudge[], at: number): Promise
 /** One hosted poll, run beside the tick so a slow server never holds local nudges. */
 async function pollCloud($: EngineInterface) {
   if (state.cloudRun !== undefined) return
-  const now = await $.clock.now()
-  if (await isHeldNow($, now)) return
-  const isDue = await locked(async () => {
-    if (!(await ownsFiring($, now))) return false
-    return now >= (num(await $.store.get('cloudNext')) ?? 0)
-  })
-  if (!isDue) return
   const stop = state.stop
   const run = {}
   state.cloudRun = run
   const isLive = () => state.stop === stop
   try {
+    const now = await $.clock.now()
+    if (await isHeldNow($, now)) return
+    const isDue = await locked(async () => {
+      if (!(await ownsFiring($, now))) return false
+      return now >= (num(await $.store.get('cloudNext')) ?? 0)
+    })
+    if (!isDue || !isLive()) return
     const got = await attempt($)
     if (!isLive()) return
-    const { fresh, ack, at } = await settle($, got)
+    const { fresh, ack, at } = await settle($, got, isLive)
     let shown = 0
     try {
       for (const n of fresh) {
@@ -417,20 +456,20 @@ async function pollCloud($: EngineInterface) {
 /** Reads `hosted_status` every `STATUS_MS` while the hosted server is connected, and clears the paid segments when it is not. */
 async function fetchHostedStatus($: EngineInterface) {
   if (state.statusRun !== undefined) return
-  const server = await $.store.get('cloudServer')
-  if ((await $.store.get('cloudUp')) !== true || typeof server !== 'string') {
-    state.statusAt = 0
-    setHosted(undefined)
-    return
-  }
-  const now = await $.clock.now()
-  if (now - state.statusAt < STATUS_MS) return
-  state.statusAt = now
   const stop = state.stop
   const run = {}
   state.statusRun = run
   const isLive = () => state.statusRun === run && state.stop === stop
   try {
+    const server = await $.store.get('cloudServer')
+    if ((await $.store.get('cloudUp')) !== true || typeof server !== 'string') {
+      state.statusAt = 0
+      if (isLive()) setHosted(undefined)
+      return
+    }
+    const now = await $.clock.now()
+    if (now - state.statusAt < STATUS_MS) return
+    state.statusAt = now
     const status = parseHostedStatus(await timed($, $.mcp.call(server, 'hosted_status', {})))
     if (!isLive()) return
     setHosted(status ?? undefined)
@@ -524,13 +563,14 @@ async function redraw($: EngineInterface) {
 async function tick($: EngineInterface) {
   if (state.isBusy) return
   state.isBusy = true
+  const stop = state.stop
   try {
     if (state.ticks++ % (SAMPLE_MS / TICK_MS) === 0) await sample($)
     await fireDue($)
     await flushWarnings($, await $.clock.now())
-    void pollCloud($).catch(err => $.ui.log(`nudgewhen: ${String(err)}`, { to: 'debug' }))
-    void fetchHostedStatus($).catch(() => undefined)
-    await refreshStatus($)
+    void track(pollCloud($)).catch(err => $.ui.log(`nudgewhen: ${String(err)}`, { to: 'debug' }))
+    void track(fetchHostedStatus($)).catch(() => undefined)
+    if (state.stop === stop) await refreshStatus($)
   } catch (err) {
     $.ui.log(`nudgewhen: ${String(err)}`, { to: 'debug' })
   } finally {
@@ -595,14 +635,16 @@ async function setting($: EngineInterface, key: string, value: string): Promise<
     const r = await $.config.set({ key: `nudgewhen.${key}`, value })
     if (r.deny !== undefined) return `Could not change ${key}: ${r.deny}`
     state.options = { ...state.options, [key]: value }
-    // An explicit bedtime or wake retires its legacy whole-hour alias, so choosing the default value sticks.
+    // An explicit bedtime or wake clears the saved whole-hour key, so choosing the default value sticks.
     const legacy = key === 'bedtime' ? 'bedtime_hour' : key === 'wake' ? 'wake_hour' : undefined
+    let stuck: string | null = null
     if (legacy !== undefined && state.options[legacy] !== undefined) {
       delete state.options[legacy]
-      await $.config.set({ key: `nudgewhen.${legacy}`, value: '' }).catch(() => undefined)
+      const cleared = await $.config.set({ key: `nudgewhen.${legacy}`, value: '' }).catch((err: unknown) => ({ deny: String(err) }))
+      if (cleared.deny !== undefined) stuck = `Set ${key}, but could not clear the saved ${legacy} (${cleared.deny}); clear it in /config or it overrides ${key} on the next start.`
     }
     state.cfg = config(state.options).cfg
-    return null
+    return stuck
   } catch (err) {
     return `Could not change ${key}: ${err instanceof Error ? err.message : String(err)}. Set it in /config instead.`
   }
@@ -756,8 +798,11 @@ async function control($: EngineInterface, verb: string, arg: string, now: numbe
       return `Paused until ${until(h)}.${await syncHosted($, { paused_until: h.until ?? PAUSE_FOREVER })}`
     }
     case 'resume': {
-      const was = isHeld(readHold(await $.store.get('hold')), now)
-      await locked(() => $.store.delete('hold'))
+      const was = await locked(async () => {
+        const held = isHeld(readHold(await $.store.get('hold')), now)
+        await $.store.delete('hold')
+        return held
+      })
       const quiet = was && isQuiet(controls, now) ? ' Quiet hours still hold toasts until they end.' : ''
       return `${was ? 'Resumed. Nudges are on.' : 'Nothing was paused.'}${quiet}${await syncHosted($, { paused_until: null })}`
     }
@@ -954,6 +999,8 @@ async function answerTool($: EngineInterface, input: Record<string, unknown>): P
   const now = await $.clock.now()
   if (/^all$/i.test(str('cancel'))) return 'Only the person cancels every nudge, with /nudge cancel all. Cancel one by its id.'
   if (str('cancel')) return cancel($, str('cancel'))
+  if (str('when') && !str('text')) return 'Pass `text` with `when`: say what to nudge about. Nothing was set.'
+  if (str('text') && !str('when')) return "Pass `when` with `text`: for example 'in 20m'. Nothing was set."
   if (str('when')) return add($, `${str('when')} ${str('text')}`, now)
   return list($, now)
 }
@@ -990,8 +1037,8 @@ async function noteInput($: EngineInterface) {
 export const register: Register = (on, options) => {
   state.stop?.()
   setHosted(undefined)
-  const { queue } = state
-  Object.assign(state, fresh(), { queue })
+  const { queue, isBusy, cloudRun, statusRun, inflight } = state
+  Object.assign(state, fresh(), { queue, isBusy, cloudRun, statusRun, inflight })
   const read = config(options)
   state.cfg = read.cfg
   state.options = { ...options }
@@ -1021,9 +1068,9 @@ export const register: Register = (on, options) => {
     if (e.isInteractive) {
       await $.store.set('lastInput', await $.clock.now())
       state.stop?.()
-      const timer = $.clock.every(TICK_MS, () => void tick($))
+      const timer = $.clock.every(TICK_MS, () => void track(tick($)))
       state.stop = () => timer.cancel()
-      void tick($)
+      void track(tick($))
       if (e.surface === null || e.surface === 'terminal') void applyTitles($).catch(() => undefined)
     }
     return next(e)
@@ -1034,6 +1081,7 @@ export const register: Register = (on, options) => {
     state.stop = undefined
     state.cloudRun = undefined
     state.statusRun = undefined
+    await Promise.allSettled([...state.inflight])
     setHosted(undefined)
     await endIdle($).catch(() => undefined)
     return next(e)
