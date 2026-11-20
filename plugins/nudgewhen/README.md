@@ -87,7 +87,7 @@ The status entry, `/nudge list` and the setup hints stay plain whatever the tone
 
 ## Titles
 
-In Ghostty on macOS, nudgewhen sets the tab title to the session's role and the window title to the working set's name. It reads `NUDGEWHEN_ROLE` and `NUDGEWHEN_SET` at session start, or what `/nudge title` stored for the session. Nothing is sent to the hosted server.
+The `titles` setting defaults to `on`, so in Ghostty on macOS a new install rewrites your tab and window titles at session start; set `titles` to `off` (or `/nudge title off`) to keep your own. nudgewhen sets the tab title to the session's role and the window title to the working set's name. It reads `NUDGEWHEN_ROLE` and `NUDGEWHEN_SET` at session start, or what `/nudge title` stored for the session. Nothing is sent to the hosted server.
 
 | Command | Does |
 | --- | --- |
@@ -101,7 +101,7 @@ A title is at most 60 characters, control characters removed. Outside Ghostty, o
 
 ## Hosted controls
 
-These change what the hosted server sends you. Signed out, each answers with a one-line sign-in hint (`/mcp`).
+The plugin ships a connection to the hosted server at `https://nudgewhen.dev/mcp`, a third-party service. Claude Code asks you to sign in (`/mcp`) the first time it is needed; until you do, nothing is sent and local nudges run as usual. These controls change what the server sends you. Signed out, each answers with a one-line sign-in hint (`/mcp`).
 
 | Command | Does |
 | --- | --- |
@@ -111,7 +111,7 @@ These change what the hosted server sends you. Signed out, each answers with a o
 | `/nudge failures-only on` | CI nudges only for failures (`off` undoes it) |
 | `/nudge kinds ci,pr_landed` | which kinds you get: `ci`, `review_requested`, `review_submitted`, `pr_landed` |
 
-`/nudge quiet`, `/nudge pause` and `/nudge resume` also update the server, with your local time zone, when you are signed in. A pause with no end is sent as a far-future time.
+`/nudge snooze`, `/nudge quiet`, `/nudge pause` and `/nudge resume` also update the server when you are signed in, sending the hold's end time (or none), your quiet hours and your IANA time zone to nudgewhen.dev. There is no separate opt-out: stay signed out of the server (`/mcp`) and nothing is sent. A pause with no end is sent as a far-future time. A command waits at most 3 seconds for the server; a slower sync finishes in the background and a failure shows as a toast.
 
 ## Status line
 

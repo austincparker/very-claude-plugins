@@ -10,7 +10,15 @@
 
 ### Changed
 
-- `bedtime_hour` and `wake_hour` are replaced by `bedtime` and `wake` (`HH:MM`).
+- **Breaking:** `bedtime_hour` and `wake_hour` are replaced by `bedtime` and `wake` (`HH:MM`). Saved values are not carried over: the bedtime nudge runs 23:00 to 05:00 until you set `bedtime` and `wake` in `/config` or with `/nudge bedtime 22:30` and `/nudge wake 06:00`.
+- Ghostty titles default to on: a session start now sets the tab and window titles. Set `titles` to `off` to keep your own.
+- The plugin now declares the hosted MCP server `https://nudgewhen.dev/mcp`, a third-party service that asks you to sign in. Snooze, pause, resume and quiet hours send their hold, quiet hours and time zone to it once you are signed in; stay signed out and nothing is sent.
+- Local `/nudge` commands wait at most 3 seconds for the hosted server.
+
+### Fixed
+
+- A hosted nudge whose toast was cut short by a restart or session end is shown on the next poll instead of acked unseen.
+- `/nudge mute` and `/nudge unmute` keep every muted repo the server holds, however long the list.
 - The `idle-check` fallback named in 0.3.0 stays in this release; it is removed in 0.5.0.
 
 ## [0.3.0]
