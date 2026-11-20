@@ -7,6 +7,10 @@ here=$(cd "$(dirname "$0")" && pwd)
 cmd=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["hooks"]["Stop"][0]["hooks"][0]["command"])' "$here/../hooks/hooks.json")
 grep -q "NUDGEWHEN_IDLE_DIR" "$here/../hooks/idle.ts"
 grep -q -F "nudgewhen-idle-\${idle.sessionId}.json" "$here/../hooks/idle.ts"
+# The shipped skill's directory and name must match pluginNudgeCommand('idle') in idle.ts.
+grep -q '^name: idle-nudge$' "$here/../skills/idle-nudge/SKILL.md"
+grep -q "pluginNudgeCommand(DESCRIPTOR)" "$here/../hooks/idle.ts"
+grep -q "^const DESCRIPTOR = 'idle'" "$here/../hooks/idle.ts"
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 fail() { echo "FAIL: $1" >&2; exit 1; }

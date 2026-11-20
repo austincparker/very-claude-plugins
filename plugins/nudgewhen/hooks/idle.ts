@@ -14,7 +14,7 @@ const DRAFT_WAIT_MS = MINUTE
 const DRAFT_WAITS_MAX = 5
 const PLUGIN = 'nudgewhen'
 const DESCRIPTOR = 'idle'
-/** The name before `-nudge` was adopted; a person's own skill under it still runs, after one named `idle-nudge`. */
+/** A person's own skill under this name runs when there is no `idle-nudge`. */
 const LEGACY_COMMAND = 'idle-check'
 const PLUGIN_COMMAND = pluginNudgeCommand(DESCRIPTOR)
 
@@ -48,11 +48,11 @@ export function fresh(ws: readonly Wait[], nudged: ReadonlySet<string>): Wait[] 
 }
 
 /** Every skill nudgewhen runs for a nudge is named `<descriptor>-nudge`: `idle-nudge` for the idle nudge. */
-export function nudgeCommand(descriptor: string): string {
+export function nudgeCommand<D extends string>(descriptor: D): `${D}-nudge` {
   return `${descriptor}-nudge`
 }
 
-export function pluginNudgeCommand(descriptor: string): string {
+export function pluginNudgeCommand<D extends string>(descriptor: D): `nudgewhen:${D}-nudge` {
   return `${PLUGIN}:${nudgeCommand(descriptor)}`
 }
 
@@ -61,7 +61,7 @@ export function pickNudgeCommand(cmds: readonly CommandInfo[], descriptor: strin
   const own = nudgeCommand(descriptor)
   for (const name of [own, ...ownFallbacks]) if (cmds.some(c => c.name === name && c.source !== 'plugin')) return name
   const plugin = pluginNudgeCommand(descriptor)
-  if (cmds.some(c => c.name === plugin || (c.name === own && c.source === 'plugin' && c.plugin === PLUGIN))) return plugin
+  if (cmds.some(c => c.source === 'plugin' && c.plugin === PLUGIN && (c.name === plugin || c.name === own))) return plugin
   return undefined
 }
 
@@ -201,7 +201,7 @@ async function nudge($: EngineInterface, gen: number) {
     $.ui.log(`nudgewhen idle: prompt.submit: ${String(err)}`, { to: 'debug' })
     // Nothing ran: leave these waits for the next turn's check.
     if (gen === idle.gen && nudged === idle.nudged) for (const w of due) nudged.delete(w.key)
-    $.ui.toast(`nudgewhen: could not start it; run /${PLUGIN_COMMAND}`, { timeoutMs: 15_000 })
+    $.ui.toast(`nudgewhen: could not start it; run /${cmd}`, { timeoutMs: 15_000 })
   }
 }
 
@@ -223,7 +223,7 @@ async function removeDir($: EngineInterface, dir: string | undefined) {
   }
 }
 
-/** Stops the check and deletes the report, which holds scheduled prompts. register.ts calls it from its session.end hook. */
+/** Stops the idle nudge and deletes the report, which holds scheduled prompts. register.ts calls it from its session.end hook. */
 export async function endIdle($: EngineInterface) {
   idle.seq++
   invalidate()
