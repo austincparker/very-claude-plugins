@@ -220,7 +220,7 @@ test('the session ending deletes the report and its directory', ON, async ($, on
   const { clock, seen, stop } = world(on)
   await start($)
   await stop($, { tasks: [{ id: 'se-1', type: 'shell' }] })
-  await $.session.end({ sessionId: 'session-a', reason: 'exit' })
+  await $.session.end({ sessionId: 'session-a', reason: 'other', resume: { id: 'session-a' } })
   expect(seen.procs.slice(-2)).toEqual([
     'rm -f -- /tmp/t/nudgewhen-idle.AbC123/nudgewhen-idle-session-a.json',
     'rmdir /tmp/t/nudgewhen-idle.AbC123',
