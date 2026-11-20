@@ -1,5 +1,6 @@
 import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 
+import { registerIdle } from './idle'
 import { MINUTE, USAGE, afterFiring, describe, hourLabel, isBedtime, parseWhen, span } from './schedule'
 import type { Nudge } from './schedule'
 import { SAMPLE_MS, isSampler, localStamp, num, readLog, readSit, report, satMinutes, step } from './sitting'
@@ -301,6 +302,7 @@ export const register: Register = (on, options) => {
   const { queue } = state
   Object.assign(state, fresh(), { queue })
   state.cfg = config(options)
+  registerIdle(on, options)
 
   on('session.start', async ($, e, next) => {
     state.sessionId = await $.session.id()
