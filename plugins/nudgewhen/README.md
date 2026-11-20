@@ -51,7 +51,7 @@ Nudges fire while a Claude Code session is open. One that came due while none wa
 
 `/nudgewhen:idle-check` asks whether the session truly needs to sit idle. It lists what the session waits on, hands off to a detached script or job whatever needs no judgment, and ends with one line: the session can close, or what still needs it. Run it by hand anytime.
 
-Turn on **Nudge sessions when idle?** and nudgewhen runs it for you. When Claude ends a turn still holding waits and you send no prompt for two minutes, it runs the check. Waits are background shells, agents, workflows, monitors Claude started, and scheduled wake-ups. It runs once per wait: the same waits never trigger it twice, a new one does. A draft in your prompt box holds it off a minute at a time. Your own `/idle-check` command wins over the plugin's when you have one.
+Turn on **Nudge sessions when idle?** and nudgewhen runs it for you. When Claude ends a turn still holding waits and you send no prompt for two minutes, it runs the check. Waits are background shells, agents, workflows, monitors Claude started, and scheduled wake-ups. It runs once per wait: the same waits never trigger it twice, a new one does. A draft in your prompt box holds it off a minute at a time, for up to five minutes. Your own `/idle-check` command wins over the plugin's when you have one.
 
 It needs plugin hooks turned on, since it reads Claude Code's own end-of-turn report of background work. It runs a turn, which uses your usage, so it's off by default.
 
