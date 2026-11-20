@@ -34,6 +34,7 @@ import {
 } from './hosted'
 import { KINDS as LINE_KINDS, LINES_MAX, kindForSource, render, parseLine, pickLine, readLines, readTone } from './lines'
 import type { Kind, Line, Tone } from './lines'
+import { register as registerStatusLine } from './statusline'
 import { TITLES_MAX, cleanTitle, isGhostty, parseTitleArgs, readTitlesOn, titleArgv, ttyPath } from './titles'
 import { MINUTE, USAGE, afterFiring, clock, dayHint, describe, parseWhen, span } from './schedule'
 import type { Nudge } from './schedule'
@@ -926,6 +927,7 @@ export const register: Register = (on, options) => {
   state.cfg = read.cfg
   state.options = { ...options }
   state.warnings = read.warnings
+  registerStatusLine(on, options)
 
   on('session.start', async ($, e, next) => {
     state.sessionId = await $.session.id()
