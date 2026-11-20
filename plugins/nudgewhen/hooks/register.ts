@@ -385,8 +385,10 @@ async function pollCloud($: EngineInterface) {
     try {
       for (const n of fresh) {
         if (!isLive()) return
+        if (await isHeldNow($, await $.clock.now())) break
         const line = await say($, kindForSource(n.source), { text: n.text })
         if (!isLive()) return
+        if (await isHeldNow($, await $.clock.now())) break
         $.ui.toast(line ?? `nudge (${n.source}): ${n.text}`, { timeoutMs: 15_000 })
         $.ui.notify(line ?? n.text, { title: `nudgewhen - ${n.source}` }).catch(() => undefined)
         shown += 1
@@ -396,9 +398,12 @@ async function pollCloud($: EngineInterface) {
     }
     if (!isLive()) return
     if (fresh.length > 0) await refreshStatus($)
-    if (!('server' in got) || ack.length === 0) return
-    const failed = new Set(await ackAll($, got.server, ack, isLive))
-    const done = new Set(ack.filter(id => !failed.has(id)))
+    if (!('server' in got)) return
+    const unshownIds = new Set(fresh.slice(shown).map(n => n.id))
+    const toAck = ack.filter(id => !unshownIds.has(id))
+    if (toAck.length === 0) return
+    const failed = new Set(await ackAll($, got.server, toAck, isLive))
+    const done = new Set(toAck.filter(id => !failed.has(id)))
     if (done.size === 0) return
     await locked(async () => {
       const current = readIds(await $.store.get('cloudPending'))
