@@ -80,7 +80,7 @@
     "status_segments": {
       "type": "string",
       "title": "Status line segments",
-      "description": "A comma list in display order. Free: sit, break, next, bed, breaks, context, limits, cost, model, branch. Hosted: hosted, ci, reviews. Unknown names are skipped.",
+      "description": "A comma list in display order. Free: sit, break, next, bed, breaks, context, limits, cost, model, branch. Hosted: hosted, ci, reviews. With the status line launcher on (status_line wrap or only): effort, fast, vim, pr, style, worktree, dir, lines. Unknown names are skipped.",
       "default": "sit,bed,hosted"
     },
     "status_line": {

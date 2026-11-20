@@ -11,14 +11,21 @@ export const DEFAULT_SEGMENTS = 'sit,bed,hosted'
 
 export const FREE = ['sit', 'break', 'next', 'bed', 'breaks', 'context', 'limits', 'cost', 'model', 'branch'] as const
 export const PAID = ['hosted', 'ci', 'reviews'] as const
+/** Rows the launcher (bin/statusline) draws from Claude Code's own status JSON; the mod only orders them. */
+export const LAUNCHER = ['effort', 'fast', 'vim', 'pr', 'style', 'worktree', 'dir', 'lines'] as const
 export type Free = (typeof FREE)[number]
 export type Paid = (typeof PAID)[number]
+export type Launcher = (typeof LAUNCHER)[number]
 
 const NEXT_TEXT_MAX = 24
 const BED_LEAD_MIN = 120
 
-function isKnown(name: string): name is Free | Paid {
-  return (FREE as readonly string[]).includes(name) || (PAID as readonly string[]).includes(name)
+export function isLauncherName(name: string): name is Launcher {
+  return (LAUNCHER as readonly string[]).includes(name)
+}
+
+function isKnown(name: string): name is Free | Paid | Launcher {
+  return (FREE as readonly string[]).includes(name) || (PAID as readonly string[]).includes(name) || isLauncherName(name)
 }
 
 function tokens(list: string): string[] {
@@ -26,7 +33,7 @@ function tokens(list: string): string[] {
 }
 
 /** The known segment names in `list`, in order, each once. */
-export function parseSegments(list: string): (Free | Paid)[] {
+export function parseSegments(list: string): (Free | Paid | Launcher)[] {
   return [...new Set(tokens(list))].filter(isKnown)
 }
 

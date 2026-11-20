@@ -4,6 +4,7 @@ type SettingsLayer = { source: string; settings: Readonly<Record<string, unknown
 
 export const STATE_DIR = '${CLAUDE_CONFIG_DIR:-$HOME/.claude}/nudgewhen/status'
 export const INTERVAL_MAX = 30
+export const SESSION_ID = /^[A-Za-z0-9_-]+$/
 
 export type StatusMode = 'wrap' | 'only'
 type Obj = Record<string, unknown>
@@ -29,6 +30,24 @@ export function readMode(layers: readonly SettingsLayer[]): StatusMode | null {
     }
   }
   return null
+}
+
+/** True when `v` is a `statusLine` setting that runs the plugin's launcher, wherever the plugin is installed. */
+export function isLauncher(v: unknown): boolean {
+  const cmd = isObj(v) ? v.command : undefined
+  return typeof cmd === 'string' && ['wrap', 'only'].some(mode => cmd.includes(`/bin/statusline ${mode} "${STATE_DIR}" `))
+}
+
+/** The directory the launcher reads segment files from, as its shell expands STATE_DIR; null when neither variable is set. */
+export function stateDir(cfg: string | undefined, home: string | undefined): string | null {
+  if (cfg) return `${cfg}/nudgewhen/status`
+  return home ? `${home}/.claude/nudgewhen/status` : null
+}
+
+/** The segment file: a version and time stamp, the order line, then one `name<TAB>text` row per non-empty text. */
+export function segmentFile(now: number, list: string, rows: readonly (readonly [string, string])[]): string {
+  const body = rows.filter(([, text]) => text !== '').map(([name, text]) => `${name}\t${text.replace(/[\t\r\n]/g, ' ')}\n`)
+  return `v1 ${now}\n${list}\n${body.join('')}`
 }
 
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
