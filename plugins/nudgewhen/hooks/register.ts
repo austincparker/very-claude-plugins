@@ -1045,7 +1045,8 @@ export const register: Register = (on, options) => {
     state.cloudRun = undefined
     state.statusRun = undefined
     setHosted(undefined)
-    if (state.filePath !== undefined) await run($, ['rm', '-f', state.filePath])
+    // The launcher keeps wrap's last good prior output beside the segment file, as <session>.prior.
+    if (state.filePath !== undefined) await run($, ['rm', '-f', state.filePath, state.filePath.replace(/\.txt$/, '.prior')])
     state.filePath = undefined
     return next(e)
   })

@@ -51,9 +51,15 @@ test('wrap keeps every prior key and sets statusLine', () => {
   expect(statusLine(r)).toEqual({
     type: 'command',
     command: `'${ROOT}'/bin/statusline wrap "${STATE}" ${b64('old')}`,
+    extra: 1,
     padding: 0,
     refreshInterval: 30,
   })
+})
+
+test('a prior statusLine key the launcher does not set is kept', () => {
+  const r = answer([cfg('wrap')], { statusLine: { type: 'command', command: 'old', hideVimModeIndicator: true } }, ROOT)
+  expect(statusLine(r).hideVimModeIndicator).toBe(true)
 })
 
 test('only mode still passes the prior command', () => {

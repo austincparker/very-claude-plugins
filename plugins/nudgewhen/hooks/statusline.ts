@@ -85,6 +85,7 @@ export function answer(layers: readonly SettingsLayer[], prior: Readonly<Obj>, r
   return {
     ...prior,
     statusLine: {
+      ...old,
       type: 'command',
       command: `${quote(root)}/bin/statusline ${mode} "${STATE_DIR}" ${cmd}`,
       padding,
