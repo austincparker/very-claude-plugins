@@ -1,4 +1,4 @@
-import type { EngineInterface, PluginOptions, Register, SessionUsage } from 'claude-code'
+import type { EngineInterface, McpToolResult, PluginOptions, Register, SessionUsage } from 'claude-code'
 
 import { CALL_TIMEOUT_MS, PENDING_MAX, batches, delayAfter, parsePoll, readIds, readSeen } from './cloud'
 import type { HostedNudge } from './cloud'
@@ -344,6 +344,18 @@ function settle($: EngineInterface, got: Attempt): Promise<{ fresh: HostedNudge[
   })
 }
 
+/** Takes nudges that were marked seen and pending but never shown back out of the store, so the next poll shows them rather than acking them unseen. */
+function unmark($: EngineInterface, unshown: HostedNudge[]): Promise<void> {
+  const ids = new Set(unshown.map(n => n.id))
+  const texts = new Set(unshown.map(n => `${n.source}: ${n.text}`))
+  return locked(async () => {
+    const now = await $.clock.now()
+    await $.store.set('cloudSeen', readSeen(await $.store.get('cloudSeen'), now).filter(s => !ids.has(s.id)))
+    await $.store.set('cloudPending', readIds(await $.store.get('cloudPending')).filter(id => !ids.has(id)))
+    await $.store.set('fired', readFired(await $.store.get('fired')).filter(f => !(f.id === 0 && texts.has(f.text))))
+  })
+}
+
 /** One hosted poll, run beside the tick so a slow server never holds local nudges. */
 async function pollCloud($: EngineInterface) {
   if (state.cloudRun !== undefined) return
@@ -362,13 +374,20 @@ async function pollCloud($: EngineInterface) {
     const got = await attempt($)
     if (!isLive()) return
     const { fresh, ack } = await settle($, got)
-    if (!isLive()) return
-    for (const n of fresh) {
-      const line = await say($, kindForSource(n.source), { text: n.text })
-      if (!isLive()) return
-      $.ui.toast(line ?? `nudge (${n.source}): ${n.text}`, { timeoutMs: 15_000 })
-      $.ui.notify(line ?? n.text, { title: `nudgewhen - ${n.source}` }).catch(() => undefined)
+    let shown = 0
+    try {
+      for (const n of fresh) {
+        if (!isLive()) return
+        const line = await say($, kindForSource(n.source), { text: n.text })
+        if (!isLive()) return
+        $.ui.toast(line ?? `nudge (${n.source}): ${n.text}`, { timeoutMs: 15_000 })
+        $.ui.notify(line ?? n.text, { title: `nudgewhen - ${n.source}` }).catch(() => undefined)
+        shown += 1
+      }
+    } finally {
+      if (shown < fresh.length) await unmark($, fresh.slice(shown))
     }
+    if (!isLive()) return
     if (fresh.length > 0) await refreshStatus($)
     if (!('server' in got) || ack.length === 0) return
     const failed = new Set(await ackAll($, got.server, ack, isLive))
@@ -608,12 +627,41 @@ async function hostedCall($: EngineInterface, server: string, tool: string, args
   }
 }
 
+const SYNC_WAIT_MS = 3000
+const SYNC_FAILED = 'Hosted sync failed: /nudge prefs shows what the server has.'
+
 /** Sends `update` to the hosted server beside the local change; empty when it is not connected, one line when the server refuses. */
-async function syncHosted($: EngineInterface, update: Record<string, unknown>): Promise<string> {
+async function pushHosted($: EngineInterface, update: Record<string, unknown>): Promise<string> {
   const server = await hostedServer($)
   if (server === null) return ''
   const r = await hostedCall($, server, 'set_prefs', { ...update, tz: localZone() })
-  return r === null ? '\nHosted sync failed: /nudge prefs shows what the server has.' : ''
+  return r === null ? `\n${SYNC_FAILED}` : ''
+}
+
+/** Like `pushHosted`, but a local command waits at most `SYNC_WAIT_MS` for it: a slow server finishes in the background and a failure then shows as a toast. */
+async function syncHosted($: EngineInterface, update: Record<string, unknown>): Promise<string> {
+  const push = pushHosted($, update)
+  let timer: { cancel(): void } | undefined
+  const late = new Promise<null>(resolve => {
+    timer = $.clock.after(SYNC_WAIT_MS, () => resolve(null))
+  })
+  const got = await Promise.race([push, late])
+  timer?.cancel()
+  if (got !== null) return got
+  push.then(msg => (msg === '' ? undefined : $.ui.toast(msg.trim(), { timeoutMs: 15_000 }))).catch(() => undefined)
+  return '\nHosted sync is still running; /nudge prefs shows what the server has.'
+}
+
+/** The muted_repos the server sent, uncapped; null when the result has no list of strings. */
+function rawMuted(result: McpToolResult): string[] | null {
+  const block = Array.isArray(result.content) ? result.content.find(b => b !== null && typeof b === 'object' && b.type === 'text') : undefined
+  if (!block || typeof block.text !== 'string') return null
+  try {
+    const v = (JSON.parse(block.text) as { muted_repos?: unknown } | null)?.muted_repos
+    return Array.isArray(v) && v.every(x => typeof x === 'string') ? (v as string[]) : null
+  } catch {
+    return null
+  }
 }
 
 const HOSTED_FAILED = 'Could not reach your hosted preferences. Try again.'
@@ -654,15 +702,17 @@ async function hostedControl($: EngineInterface, verb: string, arg: string, now:
     const prefs = got === null ? null : parsePrefs(got)
     if (prefs === null) return HOSTED_FAILED
     if (verb === 'prefs') return prefsLines(prefs, now).join('\n')
-    const has = prefs.muted_repos.some(r => r.toLowerCase() === muted)
+    // The server's whole list, not parsePrefs' capped copy: set_prefs replaces the list, so a trimmed one would delete the rest.
+    const all = rawMuted(got) ?? prefs.muted_repos
+    const has = all.some(r => r.toLowerCase() === muted)
     if (verb === 'mute') {
       if (has) return `${muted} is already muted.`
-      if (prefs.muted_repos.length >= MUTED_MAX) return `You already mute ${MUTED_MAX} repos. Unmute some first.`
-      update = { muted_repos: [...prefs.muted_repos, muted] }
+      if (all.length >= MUTED_MAX) return `You already mute ${MUTED_MAX} repos. Unmute some first.`
+      update = { muted_repos: [...all, muted] }
       done = `Muted ${muted}.`
     } else {
       if (!has) return `${muted} is not muted.`
-      update = { muted_repos: prefs.muted_repos.filter(r => r.toLowerCase() !== muted) }
+      update = { muted_repos: all.filter(r => r.toLowerCase() !== muted) }
       done = `Unmuted ${muted}.`
     }
   }
