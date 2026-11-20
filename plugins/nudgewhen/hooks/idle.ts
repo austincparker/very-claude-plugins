@@ -8,6 +8,7 @@ type Cron = { id: string; prompt: string }
 export type Wait = { key: string; label: string }
 
 export const IDLE_AFTER_MS = 2 * MINUTE
+const DUE_AFTER_MS = 5000
 const DRAFT_WAIT_MS = MINUTE
 const DRAFT_WAITS_MAX = 5
 const COMMAND = 'idle-check'
@@ -57,11 +58,11 @@ export function summary(ws: readonly Wait[]): string {
 const idle = {
   nudged: new Set<string>(),
   startedMonitors: new Set<string>(),
-  isInteractive: false,
+  file: undefined as string | undefined,
+  sessionId: '',
   isTurnRunning: false,
   isDue: false,
   draftWaits: 0,
-  current: [] as Wait[],
   cancel: undefined as (() => void) | undefined,
 }
 
@@ -93,10 +94,29 @@ async function fire($: EngineInterface) {
   await nudge($)
 }
 
+/** The waits in the report the Stop settings hook wrote at the end of the last turn; none when it is missing or not this session's. */
+export function reportedWaits(text: string | undefined, sessionId: string, startedMonitors: ReadonlySet<string>): Wait[] {
+  let r: unknown
+  try {
+    r = JSON.parse(text ?? '')
+  } catch {
+    return []
+  }
+  if (r === null || typeof r !== 'object') return []
+  const o = r as Record<string, unknown>
+  if (o.session_id !== sessionId || o.stop_hook_active === true || o.agent_id !== undefined) return []
+  const rows = (v: unknown) => (Array.isArray(v) ? v.filter(x => x !== null && typeof x === 'object') : [])
+  const tasks = rows(o.background_tasks).filter((t): t is Task => typeof t.id === 'string' && typeof t.type === 'string')
+  const crons = rows(o.session_crons).filter((c): c is Cron => typeof c.id === 'string' && typeof c.prompt === 'string')
+  return waits(tasks, crons, startedMonitors)
+}
+
 async function nudge($: EngineInterface) {
-  const due = fresh(idle.current, idle.nudged)
   idle.isDue = false
   idle.draftWaits = 0
+  if (idle.file === undefined) return
+  const text = await $.fs.read(idle.file).catch(() => undefined)
+  const due = fresh(reportedWaits(text, idle.sessionId, idle.startedMonitors), idle.nudged)
   if (due.length === 0) return
   for (const w of due) idle.nudged.add(w.key)
   const cmd = pickCommand(await $.command.list().catch(() => []))
@@ -123,14 +143,20 @@ async function nudge($: EngineInterface) {
 
 export function registerIdle(on: On, options: PluginOptions): void {
   clearTimer()
-  // Every registration drops the timer and turn facts; the nudged waits are kept.
-  Object.assign(idle, { isTurnRunning: false, isDue: false, draftWaits: 0, current: [] })
+  // Every registration drops the timer and turn facts; the session's report file and nudged waits are kept.
+  Object.assign(idle, { isTurnRunning: false, isDue: false, draftWaits: 0 })
   if (options.idle_nudge !== true) return
 
   // register.ts holds the plain session.start and prompt.submit hooks; these take matchers.
   on('session.start', { isInteractive: true }, async ($, e, next) => {
     clearTimer()
-    idle.isInteractive = true
+    idle.sessionId = await $.session.id()
+    const dir = ((await $.env.get('TMPDIR')) || '/tmp').replace(/\/+$/, '')
+    const file = `${dir}/nudgewhen-idle-${idle.sessionId}.json`
+    // The Stop settings hook in hooks.json writes its input to this file.
+    const r = await $.env.set('NUDGEWHEN_IDLE_FILE', file)
+    if (r.deny === undefined) idle.file = file
+    else $.ui.log(`nudgewhen idle: off for this session: ${r.deny}`, { to: 'debug' })
     return next(e)
   })
 
@@ -152,17 +178,12 @@ export function registerIdle(on: On, options: PluginOptions): void {
     return next(e)
   })
 
-  on('classic.Stop', async ($, e, next) => {
+  on('turn.complete', async ($, e, next) => {
+    if (e.agentId !== undefined || idle.file === undefined) return next(e)
     idle.isTurnRunning = false
-    if (!idle.isInteractive || e.stop_hook_active || e.agent_id !== undefined) return next(e)
-    idle.current = waits(e.background_tasks ?? [], e.session_crons ?? [], idle.startedMonitors)
-    const due = fresh(idle.current, idle.nudged)
-    if (due.length === 0) {
-      clearTimer()
-      idle.isDue = false
-    } else if (idle.isDue) {
-      // $.command.run rejects inside a hook the turn waits on.
-      arm($, 0, true)
+    if (idle.isDue) {
+      // Gives the Stop settings hook time to write this turn's report.
+      arm($, DUE_AFTER_MS, true)
     } else {
       idle.draftWaits = 0
       arm($, IDLE_AFTER_MS)

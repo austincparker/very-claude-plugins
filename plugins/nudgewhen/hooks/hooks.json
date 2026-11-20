@@ -1,1 +1,16 @@
-{ "modules": ["./register.ts"] }
+{
+  "modules": ["./register.ts"],
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"$NUDGEWHEN_IDLE_FILE\" ] || { umask 077; cat > \"$NUDGEWHEN_IDLE_FILE\"; }; exit 0",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
