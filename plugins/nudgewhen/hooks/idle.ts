@@ -14,7 +14,7 @@ const DRAFT_WAIT_MS = MINUTE
 const DRAFT_WAITS_MAX = 5
 const PLUGIN = 'nudgewhen'
 const DESCRIPTOR = 'idle'
-/** A person's own skill under this name runs when there is no `idle-nudge`. */
+/** A person's own skill under this name runs when they have no `idle-nudge` of their own; it outranks the plugin's `nudgewhen:idle-nudge`. */
 const LEGACY_COMMAND = 'idle-check'
 const PLUGIN_COMMAND = pluginNudgeCommand(DESCRIPTOR)
 
@@ -56,7 +56,7 @@ export function pluginNudgeCommand<D extends string>(descriptor: D): `nudgewhen:
   return `${PLUGIN}:${nudgeCommand(descriptor)}`
 }
 
-/** For a nudge of the given descriptor: the person's own `<descriptor>-nudge` first, then any extra names of their own in order, then this plugin's, listed bare or with its plugin prefix. "Own" means a `user` command (the person's or the project's file); an MCP prompt or built-in of the same name never takes that slot. */
+/** For a nudge of the given descriptor: the person's own `<descriptor>-nudge` first, then any extra names of their own in order, then this plugin's, listed bare or with its plugin prefix. "Own" means a command whose `source` is exactly `user`; a command of any other source (plugin, MCP, built-in) never takes that slot. */
 export function pickNudgeCommand(cmds: readonly CommandInfo[], descriptor: string, ownFallbacks: readonly string[] = []): string | undefined {
   const own = nudgeCommand(descriptor)
   for (const name of [own, ...ownFallbacks]) if (cmds.some(c => c.name === name && c.source === 'user')) return name
