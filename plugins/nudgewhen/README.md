@@ -49,13 +49,13 @@ Nudges fire while a Claude Code session is open. One that came due while none wa
 
 ## Nudge skills
 
-The idle nudge runs a skill named `idle-nudge`. A skill of your own with that name runs instead of the plugin's `nudgewhen:idle-nudge`. Without one, a skill of your own named `idle-check` runs; that fallback goes in 0.4.0, so rename it.
+The idle nudge runs a skill named `idle-nudge`. A skill of your own with that name (source `user`) runs instead of the plugin's `nudgewhen:idle-nudge`. Without one, a skill of your own named `idle-check` runs; that fallback goes in 0.4.0, so rename it to `idle-nudge`.
 
 ## Idle nudge
 
 The `nudgewhen:idle-nudge` skill asks whether the session truly needs to sit idle. It lists what the session waits on, hands off to a detached script or job whatever needs no judgment, and ends with one line: the session can close, or what still needs it. Run it by hand anytime.
 
-Turn on **Nudge sessions when idle?** and nudgewhen runs it for you. When Claude ends a turn still holding waits and you send no prompt for two minutes, it runs the nudge. Waits are background shells, agents, workflows, monitors Claude started, and scheduled wake-ups. It runs once per wait: the same waits never trigger it twice, a new one does. A draft in your prompt box holds it off a minute at a time, for up to five minutes. A skill of your own named `idle-nudge` takes precedence over the plugin's. See Nudge skills for the `idle-check` fallback.
+Turn on **Nudge sessions when idle?** and nudgewhen runs it for you. When Claude ends a turn still holding waits and you send no prompt for two minutes, it runs the nudge. Waits are background shells, agents, workflows, monitors Claude started, and scheduled wake-ups. It runs once per wait: the same waits never trigger it twice, a new one does. A draft in your prompt box holds it off a minute at a time, for up to five minutes. Nudge skills says which skill runs.
 
 It needs plugin hooks turned on, since it reads Claude Code's own end-of-turn report of background work; with hooks off it finds no report and does nothing. The report goes to a private temporary directory made for the session and is deleted when the session ends. With the setting off, the plugin's Stop hook still starts a shell at the end of each turn, and the shell exits at once without writing anything. The idle nudge runs a turn, which uses your usage, so the setting is off by default.
 
