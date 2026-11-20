@@ -590,6 +590,12 @@ async function setting($: EngineInterface, key: string, value: string): Promise<
     const r = await $.config.set({ key: `nudgewhen.${key}`, value })
     if (r.deny !== undefined) return `Could not change ${key}: ${r.deny}`
     state.options = { ...state.options, [key]: value }
+    // An explicit bedtime or wake retires its legacy whole-hour alias, so choosing the default value sticks.
+    const legacy = key === 'bedtime' ? 'bedtime_hour' : key === 'wake' ? 'wake_hour' : undefined
+    if (legacy !== undefined && state.options[legacy] !== undefined) {
+      delete state.options[legacy]
+      await $.config.set({ key: `nudgewhen.${legacy}`, value: '' }).catch(() => undefined)
+    }
     state.cfg = config(state.options).cfg
     return null
   } catch (err) {
