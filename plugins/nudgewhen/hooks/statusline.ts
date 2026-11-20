@@ -67,7 +67,7 @@ export function answer(layers: readonly SettingsLayer[], prior: Readonly<Obj>, r
     ...prior,
     statusLine: {
       type: 'command',
-      command: `${quote(root)}/bin/statusline ${mode} ${STATE_DIR} ${cmd}`,
+      command: `${quote(root)}/bin/statusline ${mode} "${STATE_DIR}" ${cmd}`,
       padding,
       refreshInterval: interval,
     },

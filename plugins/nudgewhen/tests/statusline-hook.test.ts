@@ -50,7 +50,7 @@ test('wrap keeps every prior key and sets statusLine', () => {
   expect(r.env).toEqual({ A: '1' })
   expect(statusLine(r)).toEqual({
     type: 'command',
-    command: `'${ROOT}'/bin/statusline wrap ${STATE} ${b64('old')}`,
+    command: `'${ROOT}'/bin/statusline wrap "${STATE}" ${b64('old')}`,
     padding: 0,
     refreshInterval: 30,
   })
@@ -58,12 +58,12 @@ test('wrap keeps every prior key and sets statusLine', () => {
 
 test('only mode still passes the prior command', () => {
   const r = answer([cfg('only')], { statusLine: { command: 'old' } }, ROOT)
-  expect(statusLine(r).command).toBe(`'${ROOT}'/bin/statusline only ${STATE} ${b64('old')}`)
+  expect(statusLine(r).command).toBe(`'${ROOT}'/bin/statusline only "${STATE}" ${b64('old')}`)
 })
 
 test('no prior statusLine gives -, padding 0 and interval 30', () => {
   const r = answer([cfg('wrap')], {}, ROOT)
-  expect(statusLine(r)).toMatchObject({ command: `'${ROOT}'/bin/statusline wrap ${STATE} -`, padding: 0, refreshInterval: 30 })
+  expect(statusLine(r)).toMatchObject({ command: `'${ROOT}'/bin/statusline wrap "${STATE}" -`, padding: 0, refreshInterval: 30 })
 })
 
 test('the interval is capped at 30 and a lower one stays', () => {
@@ -105,7 +105,7 @@ function hook() {
 test('the hook answers a whole read with the rewritten settings', async () => {
   const r = (await hook()({ layers: [cfg('wrap')] }, () => ({ value: { model: 'm' } }))) as { value: Record<string, unknown> }
   expect(r.value.model).toBe('m')
-  expect(statusLine(r.value).command).toBe(`'${ROOT}'/bin/statusline wrap ${STATE} -`)
+  expect(statusLine(r.value).command).toBe(`'${ROOT}'/bin/statusline wrap "${STATE}" -`)
 })
 
 test('the hook passes a read of one source, a deny and an empty layer list through', async () => {

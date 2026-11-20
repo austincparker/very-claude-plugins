@@ -1,0 +1,142 @@
+#!/bin/sh
+# nudgewhen status line launcher.
+# Usage: statusline <mode> <state dir> <base64 of prior command | ->
+# Reads Claude Code's status JSON on stdin once. In `wrap` mode it runs the prior status line command
+# (bounded at 1 second) and prints its rows first, then one row of nudgewhen segments from
+# <state dir>/<session id>.txt. Any other mode behaves like `only`. Always exits 0.
+
+exec 2>/dev/null
+
+mode=$1
+dir=$2
+b64=$3
+prior_pid=
+dog_pid=
+
+trap 'kill $prior_pid $dog_pid; exit 0' TERM INT
+
+input=$(cat)
+
+# session_id without jq; only [A-Za-z0-9_-] is accepted, so it is safe as a file name.
+# shellcheck disable=SC2020
+sid=$(printf '%s' "$input" | tr ',{}' '\n\n\n' |
+  sed -n 's/^[[:space:]]*"session_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9_-][A-Za-z0-9_-]*\)"[[:space:]]*$/\1/p' |
+  head -n1)
+
+cache=
+if [ -n "$sid" ] && [ -n "$dir" ]; then
+  if mkdir -p "$dir"; then
+    cache=$dir/$sid
+  fi
+fi
+
+# --- prior command (wrap only) ---
+if [ "$mode" = wrap ] && [ -n "$b64" ] && [ "$b64" != - ]; then
+  cmd=$(printf '%s' "$b64" | base64 -d || printf '%s' "$b64" | base64 -D)
+  if [ -n "$cmd" ]; then
+    if [ -n "$cache" ]; then
+      out=$cache.prior.$$
+    else
+      out=${TMPDIR:-/tmp}/nudgewhen-prior.$$
+    fi
+    /bin/sh -c "$cmd" >"$out" <<NUDGEWHEN_INPUT &
+$input
+NUDGEWHEN_INPUT
+    prior_pid=$!
+    (sleep 1; kill "$prior_pid") >/dev/null 2>&1 &
+    dog_pid=$!
+    wait "$prior_pid"
+    rc=$?
+    kill "$dog_pid"
+    dog_pid=
+    if [ "$rc" -eq 0 ] && [ -s "$out" ]; then
+      if [ -n "$cache" ]; then
+        mv -f "$out" "$cache.prior" || rm -f "$out"
+      else
+        awk '{ printf "%s\033[0m\n", $0 }' "$out"
+        rm -f "$out"
+      fi
+    else
+      rm -f "$out"
+    fi
+    if [ -n "$cache" ] && [ -f "$cache.prior" ]; then
+      awk '{ printf "%s\033[0m\n", $0 }' "$cache.prior"
+    fi
+  fi
+fi
+
+# --- segment row ---
+[ -n "$cache" ] || exit 0
+file=$cache.txt
+[ -f "$file" ] || exit 0
+
+first=$(head -n1 "$file")
+case $first in
+  'v1 '*) ms=${first#v1 } ;;
+  *) exit 0 ;;
+esac
+case $ms in
+  '' | *[!0-9]*) exit 0 ;;
+esac
+[ ${#ms} -le 18 ] || exit 0
+if [ ${#ms} -le 3 ]; then
+  secs=0
+else
+  secs=${ms%???}
+fi
+secs=$(printf '%s' "$secs" | sed 's/^0*//')
+now=$(date +%s)
+age=$((now - ${secs:-0}))
+[ "$age" -ge 0 ] && [ "$age" -lt 120 ] || exit 0
+
+jqout=
+if command -v jq >/dev/null; then
+  jqout=$(printf '%s' "$input" | jq -r '
+    def row(n; t): try (t | select(type == "string" and . != "") | gsub("[\t\r\n]"; " ") | n + "\t" + .) catch empty;
+    row("effort"; .effort.level | select(type == "string" and . != "") | "effort " + .),
+    row("fast"; select(.fast_mode == true) | "fast"),
+    row("vim"; .vim.mode | select(type == "string" and . != "") | "vim " + .),
+    row("pr"; select(.pr.number != null)
+      | (if .pr.kind == "mr" then "MR !" else "PR #" end) + (.pr.number | tostring)
+        + (if (.pr.review_state | type) == "string" and .pr.review_state != "" then " " + .pr.review_state else "" end)),
+    row("style"; .output_style.name | select(type == "string" and . != "default")),
+    row("worktree"; (.worktree.name // .workspace.git_worktree) | select(type == "string")),
+    row("dir"; (.workspace.current_dir // .cwd) | select(type == "string") | split("/") | last),
+    row("lines"; (.cost.total_lines_added // 0) as $a | (.cost.total_lines_removed // 0) as $r
+      | select(($a | type) == "number" and ($r | type) == "number" and ($a != 0 or $r != 0))
+      | "+\($a) -\($r)")
+  ')
+fi
+
+row=$(NUDGEWHEN_JQ=$jqout awk '
+  BEGIN {
+    split("effort fast vim pr style worktree dir lines", names, " ")
+    for (i in names) std[names[i]] = 1
+    n = split(ENVIRON["NUDGEWHEN_JQ"], jl, "\n")
+    for (i = 1; i <= n; i++) {
+      p = index(jl[i], "\t")
+      if (p > 1 && substr(jl[i], 1, p - 1) in std) jv[substr(jl[i], 1, p - 1)] = substr(jl[i], p + 1)
+    }
+  }
+  { sub(/\r$/, "") }
+  NR == 2 { list = $0 }
+  NR >= 3 {
+    p = index($0, "\t")
+    if (p > 1 && !(substr($0, 1, p - 1) in std)) fv[substr($0, 1, p - 1)] = substr($0, p + 1)
+  }
+  END {
+    m = split(list, items, ",")
+    out = ""
+    for (i = 1; i <= m; i++) {
+      k = tolower(items[i]); gsub(/^[ \t]+|[ \t]+$/, "", k)
+      if (k == "" || (k in seen)) continue
+      seen[k] = 1
+      t = (k in std) ? jv[k] : fv[k]
+      if (t == "") continue
+      out = (out == "" ? "" : out "  ·  ") t
+    }
+    if (out != "") print out
+  }
+' "$file")
+[ -z "$row" ] || printf '%s\n' "$row"
+exit 0
