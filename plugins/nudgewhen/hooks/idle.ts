@@ -45,7 +45,7 @@ export function fresh(ws: readonly Wait[], nudged: ReadonlySet<string>): Wait[] 
   return ws.filter(w => !nudged.has(w.key))
 }
 
-/** The person's own `idle-check` command first, then this plugin's, listed bare or with its plugin prefix. */
+/** The person's own `idle-check` first, then this plugin's, listed bare or with its plugin prefix. */
 export function pickCommand(cmds: readonly CommandInfo[]): string | undefined {
   if (cmds.some(c => c.name === COMMAND && c.source !== 'plugin')) return COMMAND
   if (cmds.some(c => c.name === PLUGIN_COMMAND || (c.name === COMMAND && c.source === 'plugin' && c.plugin === PLUGIN))) {
@@ -68,6 +68,7 @@ const idle = {
   nudged: new Set<string>(),
   startedMonitors: new Set<string>(),
   file: undefined as string | undefined,
+  dir: undefined as string | undefined,
   sessionId: '',
   draftWaits: 0,
   retries: 0,
@@ -90,6 +91,12 @@ function arm($: EngineInterface, ms: number) {
     void fire($, gen).catch(err => $.ui.log(`nudgewhen idle: ${String(err)}`, { to: 'debug' }))
   })
   idle.cancel = () => timer.cancel()
+}
+
+/** Clears all session state and stops any timer; for tests that share this module. */
+export function resetIdle() {
+  invalidate()
+  Object.assign(idle, { nudged: new Set<string>(), startedMonitors: new Set<string>(), file: undefined, dir: undefined, sessionId: '', draftWaits: 0, retries: 0 })
 }
 
 /** Empties the report, so a report on disk is always from the turn that just ended. */
@@ -141,6 +148,8 @@ async function nudge($: EngineInterface, gen: number) {
     if (idle.retries < RETRY_MAX) {
       idle.retries++
       arm($, RETRY_MS)
+    } else {
+      $.ui.log('nudgewhen idle: no readable report from the Stop hook; plugin hooks may be off', { to: 'debug' })
     }
     return
   }
@@ -151,7 +160,7 @@ async function nudge($: EngineInterface, gen: number) {
   const cmds = await $.command.list().catch(() => [])
   if (gen !== idle.gen) return
   const cmd = pickCommand(cmds)
-  const head = `nudgewhen: idle 2m holding ${summary(due)}`
+  const head = `nudgewhen: idle, holding ${summary(due)}`
   for (const w of due) idle.nudged.add(w.key)
   if (cmd === undefined) {
     $.ui.toast(`${head}; run /${PLUGIN_COMMAND}`, { timeoutMs: 15_000 })
@@ -175,22 +184,53 @@ async function nudge($: EngineInterface, gen: number) {
   }
 }
 
-/** Stops the check and empties the report, which holds scheduled prompts. register.ts calls it from its session.end hook. */
+/** Removes the session's report and its private directory. */
+async function removeReport($: EngineInterface) {
+  const { file, dir } = idle
+  idle.file = undefined
+  idle.dir = undefined
+  try {
+    if (file !== undefined) await $.process.run(['rm', '-f', '--', file], { timeoutMs: 5000 })
+    if (dir !== undefined) await $.process.run(['rmdir', dir], { timeoutMs: 5000 })
+  } catch (err) {
+    $.ui.log(`nudgewhen idle: remove report: ${String(err)}`, { to: 'debug' })
+  }
+}
+
+/** Stops the check and deletes the report, which holds scheduled prompts. register.ts calls it from its session.end hook. */
 export async function endIdle($: EngineInterface) {
   invalidate()
-  await clearReport($)
-  idle.file = undefined
+  await removeReport($)
+}
+
+/** Makes a mode 700 directory the Stop hook writes into, so no other local user can plant the report. */
+async function privateDir($: EngineInterface): Promise<string | undefined> {
+  const tmp = ((await $.env.get('TMPDIR')) || '/tmp').replace(/\/+$/, '')
+  const r = await $.process.run(['mktemp', '-d', `${tmp}/nudgewhen-idle.XXXXXX`], { timeoutMs: 5000 })
+  const dir = r.stdout.trim()
+  return r.exitCode === 0 && dir.startsWith(`${tmp}/`) && !dir.includes('\n') ? dir : undefined
 }
 
 async function begin($: EngineInterface) {
   invalidate()
-  Object.assign(idle, { nudged: new Set<string>(), startedMonitors: new Set<string>(), file: undefined, draftWaits: 0, retries: 0 })
+  // A new session in the same process drops the last one's report first.
+  await removeReport($)
+  Object.assign(idle, { nudged: new Set<string>(), startedMonitors: new Set<string>(), draftWaits: 0, retries: 0 })
   idle.sessionId = await $.session.id()
-  const dir = ((await $.env.get('TMPDIR')) || '/tmp').replace(/\/+$/, '')
-  // The Stop settings hook in hooks.json writes its input to <dir>/nudgewhen-idle-<its session id>.json.
+  const dir = await privateDir($)
+  if (dir === undefined) {
+    $.ui.log('nudgewhen idle: off for this session: no private directory', { to: 'debug' })
+    return
+  }
+  idle.dir = dir
+  // The Stop settings hook in hooks.json writes its input to $NUDGEWHEN_IDLE_DIR/nudgewhen-idle-<its session id>.json.
   const r = await $.env.set('NUDGEWHEN_IDLE_DIR', dir)
-  if (r.deny === undefined) idle.file = `${dir}/nudgewhen-idle-${idle.sessionId}.json`
-  else $.ui.log(`nudgewhen idle: off for this session: ${r.deny}`, { to: 'debug' })
+  if (r.deny === undefined) {
+    idle.file = `${dir}/nudgewhen-idle-${idle.sessionId}.json`
+  } else {
+    $.ui.log(`nudgewhen idle: off for this session: ${r.deny}`, { to: 'debug' })
+    await removeReport($)
+  }
 }
 
 export function registerIdle(on: On, options: PluginOptions): void {
@@ -205,6 +245,7 @@ export function registerIdle(on: On, options: PluginOptions): void {
       await begin($)
     } catch (err) {
       $.ui.log(`nudgewhen idle: off for this session: ${String(err)}`, { to: 'debug' })
+      await removeReport($)
     }
     return next(e)
   })
