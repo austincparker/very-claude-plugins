@@ -13,7 +13,19 @@ b64=$3
 prior_pid=
 dog_pid=
 
-trap 'kill $prior_pid $dog_pid; exit 0' TERM INT
+out=
+# Stop the prior command and its children, and the watchdog; leave no temp file behind.
+reap() {
+  kids=$(pgrep -P "$1")
+  kill "$1"
+  [ -z "$kids" ] || kill $kids
+}
+stop() {
+  [ -z "$prior_pid" ] || reap "$prior_pid"
+  [ -z "$dog_pid" ] || reap "$dog_pid"
+  [ -z "$out" ] || rm -f "$out"
+}
+trap 'stop; exit 0' TERM INT
 
 input=$(cat)
 
@@ -43,11 +55,12 @@ if [ "$mode" = wrap ] && [ -n "$b64" ] && [ "$b64" != - ]; then
 $input
 NUDGEWHEN_INPUT
     prior_pid=$!
-    (sleep 1; kill "$prior_pid") >/dev/null 2>&1 &
+    (sleep 1; reap "$prior_pid") >/dev/null 2>&1 &
     dog_pid=$!
     wait "$prior_pid"
     rc=$?
-    kill "$dog_pid"
+    prior_pid=
+    reap "$dog_pid"
     dog_pid=
     if [ "$rc" -eq 0 ] && [ -s "$out" ]; then
       if [ -n "$cache" ]; then
@@ -58,6 +71,11 @@ NUDGEWHEN_INPUT
       fi
     else
       rm -f "$out"
+    fi
+    out=
+    # A cached prior older than two minutes is dropped, like the segment file.
+    if [ -n "$cache" ] && [ -f "$cache.prior" ] && [ -z "$(find "$cache.prior" -mmin -2)" ]; then
+      rm -f "$cache.prior"
     fi
     if [ -n "$cache" ] && [ -f "$cache.prior" ]; then
       awk '{ printf "%s\033[0m\n", $0 }' "$cache.prior"
@@ -70,7 +88,8 @@ fi
 file=$cache.txt
 [ -f "$file" ] || exit 0
 
-first=$(head -n1 "$file")
+content=$(cat "$file") || exit 0
+first=$(printf '%s\n' "$content" | head -n1)
 case $first in
   'v1 '*) ms=${first#v1 } ;;
   *) exit 0 ;;
@@ -137,6 +156,9 @@ row=$(NUDGEWHEN_JQ=$jqout awk '
     }
     if (out != "") print out
   }
-' "$file")
+' <<NUDGEWHEN_FILE
+$content
+NUDGEWHEN_FILE
+)
 [ -z "$row" ] || printf '%s\n' "$row"
 exit 0

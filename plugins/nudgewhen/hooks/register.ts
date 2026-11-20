@@ -98,6 +98,7 @@ const fresh = () => ({
   fileBody: undefined as string | undefined,
   fileAt: 0,
   filePath: undefined as string | undefined,
+  isEnded: false,
   ticks: 0,
   isBusy: false,
   cloudRun: undefined as object | undefined,
@@ -500,21 +501,29 @@ async function segmentPath($: EngineInterface): Promise<string | null> {
   return dir === null || !SESSION_ID.test(state.sessionId) ? null : `${dir}/${state.sessionId}.txt`
 }
 
-/** Writes the segment file when its body changed or a minute has passed, so the launcher never reads a stale stamp. */
+/** Writes the segment file when its body or path changed or a minute has passed, so the launcher never reads a stale stamp. */
 async function writeSegments($: EngineInterface, now: number, list: string, rows: [string, string][]) {
+  if (state.isEnded) return
   const path = await segmentPath($)
   if (path === null) return
   const body = segmentFile(0, list, rows)
-  if (body === state.fileBody && now - state.fileAt < FILE_REWRITE_MS) return
-  try {
-    await $.fs.write(path, segmentFile(now, list, rows))
-  } catch (err) {
-    $.ui.log(`nudgewhen: ${String(err)}`, { to: 'debug' })
-    return
-  }
+  if (path === state.filePath && body === state.fileBody && now - state.fileAt < FILE_REWRITE_MS) return
+  const prev = { body: state.fileBody, at: state.fileAt, path: state.filePath }
   state.fileBody = body
   state.fileAt = now
   state.filePath = path
+  // Write beside the target and rename, so the launcher never reads a partly written file.
+  const tmp = `${path}.tmp`
+  try {
+    if ((await run($, ['mkdir', '-p', path.slice(0, path.lastIndexOf('/'))])) === null) throw new Error('mkdir failed')
+    await $.fs.write(tmp, segmentFile(now, list, rows))
+    if ((await run($, ['mv', '-f', tmp, path])) === null) throw new Error('mv failed')
+  } catch (err) {
+    state.fileBody = prev.body
+    state.fileAt = prev.at
+    state.filePath = prev.path ?? path
+    $.ui.log(`nudgewhen: ${String(err)}`, { to: 'debug' })
+  }
 }
 
 async function redraw($: EngineInterface) {
@@ -1010,6 +1019,9 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     state.sessionId = await $.session.id()
+    state.isEnded = false
+    state.fileBody = undefined
+    state.fileAt = 0
     await $.command.register({
       name: 'nudge',
       description: 'Set, list or cancel nudges; snooze or pause them; set bedtime, work hours and quiet hours; set the tone, plain or vulgar, and your own lines for it; set the Ghostty tab title (role) and window title (working set); choose status line segments and run the status line launcher; manage hosted nudges; /nudge report shows your sitting log',
@@ -1040,14 +1052,25 @@ export const register: Register = (on, options) => {
   })
 
   on('session.end', async ($, e, next) => {
+    state.isEnded = true
     state.stop?.()
     state.stop = undefined
     state.cloudRun = undefined
     state.statusRun = undefined
     setHosted(undefined)
     // The launcher keeps wrap's last good prior output beside the segment file, as <session>.prior.
-    if (state.filePath !== undefined) await run($, ['rm', '-f', state.filePath, state.filePath.replace(/\.txt$/, '.prior')])
+    // Wait for a redraw already in flight, so it cannot recreate the file after the rm.
+    await state.refresh
+    const path = state.filePath ?? (await segmentPath($))
+    if (path !== null) {
+      const base = path.replace(/\.txt$/, '')
+      if ((await run($, ['rm', '-f', path, `${path}.tmp`, `${base}.prior`])) === null) {
+        $.ui.log(`nudgewhen: could not remove ${path}`, { to: 'debug' })
+      }
+    }
     state.filePath = undefined
+    state.fileBody = undefined
+    state.fileAt = 0
     return next(e)
   })
 

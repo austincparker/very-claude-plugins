@@ -313,22 +313,22 @@ def run_once(key, sid, marker, *, flag=None, flag_path=None, debug=None, cwd=ROO
 
 def cleanup(sid):
     for p in glob.glob(os.path.join(state_dir, sid + ".*")):
-        os.remove(p)
-    for d in (state_dir, os.path.dirname(state_dir)):
         try:
-            os.rmdir(d)
-        except OSError:
-            break
+            os.remove(p)
+        except FileNotFoundError:
+            pass
 
 
 def route():
-    sid = str(uuid.uuid4())
+    sids = []
     marker = "seg-ok-" + uuid.uuid4().hex[:8]
-    others = [p for p in glob.glob(os.path.join(state_dir, "*.prior")) if sid not in p]
+    others = [p for p in glob.glob(os.path.join(state_dir, "*.prior")) if not any(s_ in p for s_ in sids)]
     tried, worked, last = [], None, None
     try:
         for key in KEYS:
             tried.append(key)
+            sid = str(uuid.uuid4())
+            sids.append(sid)
             os.makedirs(state_dir, exist_ok=True)
             with open(os.path.join(state_dir, sid + ".txt"), "w") as f:
                 f.write("v1 %d\nprobe\nprobe\t%s\n" % (int(time.time() * 1000), marker))
@@ -341,7 +341,8 @@ def route():
             cleanup(sid)
     finally:
         kill_all(signal.SIGKILL)
-        cleanup(sid)
+        for s_ in sids:
+            cleanup(s_)
     key, text, raw, argv, notes, err, prior = last
     dbg = ""
     try:

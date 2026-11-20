@@ -46,8 +46,9 @@ export function stateDir(cfg: string | undefined, home: string | undefined): str
 
 /** The segment file: a version and time stamp, the order line, then one `name<TAB>text` row per non-empty text. */
 export function segmentFile(now: number, list: string, rows: readonly (readonly [string, string])[]): string {
-  const body = rows.filter(([, text]) => text !== '').map(([name, text]) => `${name}\t${text.replace(/[\t\r\n]/g, ' ')}\n`)
-  return `v1 ${now}\n${list}\n${body.join('')}`
+  const flat = (s: string) => s.replace(/[\t\r\n]/g, ' ')
+  const body = rows.filter(([, text]) => text !== '').map(([name, text]) => `${flat(name)}\t${flat(text)}\n`)
+  return `v1 ${now}\n${flat(list)}\n${body.join('')}`
 }
 
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
@@ -76,7 +77,9 @@ export function answer(layers: readonly SettingsLayer[], prior: Readonly<Obj>, r
   if (mode === null) return null
   if (layers.some(l => l.source === 'policy' && l.settings.statusLine !== undefined)) return null
   const old = isObj(prior.statusLine) ? prior.statusLine : {}
-  const cmd = typeof old.command === 'string' ? b64(old.command) : '-'
+  // A statusLine that already runs the launcher is not wrapped again: its own prior command is carried over.
+  const cmd =
+    typeof old.command !== 'string' ? '-' : isLauncher(old) ? old.command.slice(old.command.lastIndexOf(' ') + 1) || '-' : b64(old.command)
   const padding = typeof old.padding === 'number' && Number.isFinite(old.padding) ? old.padding : 0
   const interval =
     typeof old.refreshInterval === 'number' && Number.isFinite(old.refreshInterval) && old.refreshInterval > 0
@@ -98,15 +101,16 @@ export function answer(layers: readonly SettingsLayer[], prior: Readonly<Obj>, r
  * Whether the latest whole settings read the hook saw was answered with the launcher. The plugin's own reads
  * never reach its hook (re-entry), so this is the only way the plugin learns what the engine's merge holds.
  */
-export const carried = { value: false }
+export const carried = { value: false, seq: 0 }
 
 export const register: Register = on => {
   on('settings.read', async ($, e, next) => {
     if (e.source !== undefined) return next(e)
+    const seq = ++carried.seq
     const r = await next(e)
     if ('deny' in r) return r
     const out = answer(e.layers, r.value, $.plugin.root)
-    carried.value = out !== null
+    if (seq === carried.seq) carried.value = out !== null
     return out === null ? r : { value: out }
   })
 }

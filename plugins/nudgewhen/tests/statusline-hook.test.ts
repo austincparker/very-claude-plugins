@@ -154,3 +154,13 @@ test('the state dir is under CLAUDE_CONFIG_DIR, else HOME, else none', () => {
   expect(stateDir('', '/h')).toBe('/h/.claude/nudgewhen/status')
   expect(stateDir(undefined, undefined)).toBe(null)
 })
+
+test('a statusLine that already runs the launcher is not wrapped again', () => {
+  const first = answer([cfg('wrap')], { statusLine: { type: 'command', command: 'echo hi' } }, ROOT)!
+  const second = answer([cfg('wrap')], first, ROOT)!
+  expect((second.statusLine as { command: string }).command).toBe((first.statusLine as { command: string }).command)
+})
+
+test('tabs and newlines in the list and names cannot add rows', () => {
+  expect(segmentFile(1, 'a\nx\tb', [['n\tm', 't']])).toBe('v1 1\na x b\nn m\tt\n')
+})

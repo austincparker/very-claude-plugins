@@ -134,7 +134,7 @@ fi
 json='{"session_id":"s1","cwd":"/a/b","effort":{"level":"high"},"fast_mode":true}'
 nobin=$T/nojq
 mkdir -p "$nobin"
-for t in cat tr sed head awk date mkdir mv rm sleep base64 dirname; do
+for t in cat tr sed head awk date mkdir mv rm sleep base64 dirname pgrep find; do
   p=$(command -v "$t") && ln -sf "$p" "$nobin/$t"
 done
 reset
@@ -211,6 +211,25 @@ expect 'missing state dir exits 0' 0 "$rc"
 run wrap "$(b64 'echo p')" "$T/file/sub"
 expect 'an uncreatable state dir still prints the prior' "p${ESC}[0m" "$out"
 expect 'an uncreatable state dir exits 0' 0 "$rc"
+
+# --- a cached prior older than two minutes is dropped ---
+json='{"session_id":"s1"}'
+reset
+seg s1 "$(now_ms)" 'sit' "sit${TAB}x"
+printf 'old\n' >"$state/s1.prior"
+touch -t 200001010000 "$state/s1.prior"
+run wrap "$(b64 'exit 1')"
+expect 'a stale cached prior is not replayed' "x" "$out"
+check 'a stale cached prior is removed' [ ! -f "$state/s1.prior" ]
+
+# --- a terminated launcher leaves no temp file ---
+reset
+printf '%s' "$json" | "$L" wrap "$state" "$(b64 'sleep 3; echo late')" >/dev/null &
+lpid=$!
+sleep 0.5
+kill -TERM "$lpid"
+wait "$lpid"
+expect 'a terminated launcher leaves no temp file' 0 "$(find "$state" -type f | wc -l | tr -d ' ')"
 
 # --- always exits 0 ---
 for args in '' 'wrap' 'wrap /nonexistent/x !!!notbase64' 'wrap . -'; do
