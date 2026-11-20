@@ -64,7 +64,7 @@ export function pickNudgeCommand(cmds: readonly CommandInfo[], descriptor: strin
   const own = nudgeCommand(descriptor)
   for (const name of [own, ...ownFallbacks]) if (cmds.some(c => c.name === name && c.source === 'user')) return name
   const plugin = pluginNudgeCommand(descriptor)
-  if (cmds.some(c => c.source === 'plugin' && c.plugin === PLUGIN && (c.name === plugin || c.name === own))) return plugin
+  if (cmds.some(c => c.name === plugin || (c.source === 'plugin' && c.plugin === PLUGIN && c.name === own))) return plugin
   return undefined
 }
 

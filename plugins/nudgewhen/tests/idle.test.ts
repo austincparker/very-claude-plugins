@@ -331,12 +331,14 @@ test('every nudge skill is named <descriptor>-nudge', () => {
   expect(pickNudgeCommand([plugin, own], 'bedtime')).toBe('bedtime-nudge')
   expect(pickNudgeCommand([plugin], 'bedtime')).toBe('nudgewhen:bedtime-nudge')
   expect(pickNudgeCommand([own], 'idle')).toBeUndefined()
+  const bare: CommandInfo = { name: 'nudgewhen:bedtime-nudge', description: '', source: 'plugin' }
+  expect(pickNudgeCommand([bare], 'bedtime')).toBe('nudgewhen:bedtime-nudge')
 })
 
 const USER_NUDGE: CommandInfo = { name: 'idle-nudge', description: '', source: 'user' }
 const USER_CHECK: CommandInfo = { name: 'idle-check', description: '', source: 'user' }
 const STALE_PLUGIN: CommandInfo = { name: 'nudgewhen:idle-check', description: '', source: 'plugin', plugin: 'nudgewhen' }
-const FOREIGN: CommandInfo = { name: 'nudgewhen:idle-nudge', description: '', source: 'plugin', plugin: 'else' }
+const FOREIGN: CommandInfo = { name: 'else:idle-nudge', description: '', source: 'plugin', plugin: 'else' }
 
 test('a person\'s own idle-check runs, is toasted and is prompted by its own name', ON, async ($, on) => {
   const { clock, seen, stop } = world(on, { commands: [PLUGIN_CMD, USER_CHECK], runFails: true })
@@ -451,7 +453,7 @@ test('a person\'s own idle-nudge falls back to a prompt naming it, with both of 
   expect(seen.submits).toEqual(['Use the idle-nudge skill now.'])
 })
 
-test('waits whose command.run and prompt.submit both fail are nudged again at the next turn's check', ON, async ($, on) => {
+test('waits whose command.run and prompt.submit both fail are nudged again at the next check', ON, async ($, on) => {
   const { clock, seen, stop } = world(on, { runFails: true, submitFails: true })
   await start($)
   await stop($, { tasks: [{ id: 'sup-1', type: 'shell' }] })
