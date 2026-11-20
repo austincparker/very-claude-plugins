@@ -316,6 +316,8 @@ test('pickCommand prefers the person\'s own idle-nudge, then a legacy idle-check
     [[{ name: 'idle-nudge', description: '', source: 'plugin', plugin: 'nudgewhen' }], 'nudgewhen:idle-nudge'],
     [[oldPlugin], undefined],
     [[other], undefined],
+    [[PLUGIN_CMD, { name: 'idle-nudge', description: '', source: 'mcp' }], 'nudgewhen:idle-nudge'],
+    [[PLUGIN_CMD, { name: 'idle-check', description: '', source: 'builtin' }], 'nudgewhen:idle-nudge'],
     [[], undefined],
   ]
   for (const [cmds, want] of rows) expect(pickCommand(cmds)).toBe(want)

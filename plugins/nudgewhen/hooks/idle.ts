@@ -56,10 +56,10 @@ export function pluginNudgeCommand<D extends string>(descriptor: D): `nudgewhen:
   return `${PLUGIN}:${nudgeCommand(descriptor)}`
 }
 
-/** For a nudge of the given descriptor: the person's own `<descriptor>-nudge` first, then any extra names of their own in order, then this plugin's, listed bare or with its plugin prefix. */
+/** For a nudge of the given descriptor: the person's own `<descriptor>-nudge` first, then any extra names of their own in order, then this plugin's, listed bare or with its plugin prefix. "Own" means a `user` command (the person's or the project's file); an MCP prompt or built-in of the same name never takes that slot. */
 export function pickNudgeCommand(cmds: readonly CommandInfo[], descriptor: string, ownFallbacks: readonly string[] = []): string | undefined {
   const own = nudgeCommand(descriptor)
-  for (const name of [own, ...ownFallbacks]) if (cmds.some(c => c.name === name && c.source !== 'plugin')) return name
+  for (const name of [own, ...ownFallbacks]) if (cmds.some(c => c.name === name && c.source === 'user')) return name
   const plugin = pluginNudgeCommand(descriptor)
   if (cmds.some(c => c.source === 'plugin' && c.plugin === PLUGIN && (c.name === plugin || c.name === own))) return plugin
   return undefined
