@@ -26,8 +26,8 @@ function world(on: On, w: World = {}) {
   on('tool.register', (_, e) => ({ value: { tool: `mcp__nudgewhen__${e.name}` } }))
   on('process.run', (_, e) => {
     const [cmd] = e.argv
-    if (cmd === 'mktemp' || cmd === 'rm' || cmd === 'rmdir') seen.procs.push(e.argv.join(' '))
-    const ok = cmd === 'mktemp' ? !w.mktempFails : cmd === 'rm' || cmd === 'rmdir'
+    if (cmd === 'mktemp' || cmd === 'rm') seen.procs.push(e.argv.join(' '))
+    const ok = cmd === 'mktemp' ? !w.mktempFails : cmd === 'rm'
     const stdout = cmd === 'mktemp' && ok ? '/tmp/t/nudgewhen-idle.AbC123\n' : ''
     return { value: { exitCode: ok ? 0 : 1, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
@@ -204,7 +204,7 @@ test('a session whose environment cannot be set stays quiet, starts, and drops i
   await stop($, { tasks: [{ id: 'ef-1', type: 'shell' }] })
   await clock.advance(IDLE_AFTER_MS + MINUTE)
   expect(seen.runs).toEqual([])
-  expect(seen.procs).toContain('rmdir /tmp/t/nudgewhen-idle.AbC123')
+  expect(seen.procs).toContain('rm -rf -- /tmp/t/nudgewhen-idle.AbC123')
 })
 
 test('a session with no private directory stays quiet', ON, async ($, on) => {
@@ -221,10 +221,7 @@ test('the session ending deletes the report and its directory', ON, async ($, on
   await start($)
   await stop($, { tasks: [{ id: 'se-1', type: 'shell' }] })
   await $.session.end({ sessionId: 'session-a', reason: 'other', resume: { id: 'session-a' } })
-  expect(seen.procs.slice(-2)).toEqual([
-    'rm -f -- /tmp/t/nudgewhen-idle.AbC123/nudgewhen-idle-session-a.json',
-    'rmdir /tmp/t/nudgewhen-idle.AbC123',
-  ])
+  expect(seen.procs.slice(-1)).toEqual(['rm -rf -- /tmp/t/nudgewhen-idle.AbC123'])
   await clock.advance(IDLE_AFTER_MS + MINUTE)
   expect(seen.runs).toEqual([])
 })
@@ -282,6 +279,18 @@ test('a refused command.run falls back to a prompt, then the toast', ON, async (
   expect(seen.runs).toEqual(['nudgewhen:idle-check'])
   expect(seen.submits).toEqual(['Use the nudgewhen:idle-check skill now.'])
   expect(seen.toasts.at(-1)).toMatch(/run \/nudgewhen:idle-check$/)
+})
+
+test('a stop-hook-active report does not make nudged waits count as new', ON, async ($, on) => {
+  const { clock, seen, stop } = world(on)
+  await start($)
+  await stop($, { tasks: [{ id: 'sa-1', type: 'shell' }] })
+  await clock.advance(IDLE_AFTER_MS)
+  await stop($, { tasks: [{ id: 'sa-1', type: 'shell' }], active: true })
+  await clock.advance(IDLE_AFTER_MS)
+  await stop($, { tasks: [{ id: 'sa-1', type: 'shell' }] })
+  await clock.advance(IDLE_AFTER_MS)
+  expect(seen.runs.length).toBe(1)
 })
 
 test('reportedWaits reads nothing from a missing or broken report', () => {

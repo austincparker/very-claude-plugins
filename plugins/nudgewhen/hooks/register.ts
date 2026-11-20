@@ -337,7 +337,7 @@ export const register: Register = (on, options) => {
   on('session.end', async ($, e, next) => {
     state.stop?.()
     state.stop = undefined
-    await endIdle($)
+    await endIdle($).catch(() => undefined)
     return next(e)
   })
 

@@ -30,7 +30,7 @@ Claude gets a `nudge` tool that sets, lists and cancels nudges one at a time, so
 
 ## Settings
 
-Install asks for these; change them later in `/config`.
+Install asks for these; change them later in `/config`. **Nudge sessions when idle?** takes effect when the next session starts.
 
 | Setting | Default |
 | --- | --- |

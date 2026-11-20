@@ -1,6 +1,6 @@
 ---
 name: idle-check
-description: This skill should be used when nudgewhen reports the session idle while holding background work, or when asked for an "idle check" or whether the session needs to stay open.
+description: This skill should be used when nudgewhen reports the session idle while holding background work ("Use the idle-check skill now."), or when asked for an "idle check", "is it necessary to sit idle", "does this session need to stay open", or before ending a turn to wait on CI, a deploy, a merge queue, an agent or a scheduled wake-up.
 ---
 
 # Idle check

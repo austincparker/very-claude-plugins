@@ -16,9 +16,16 @@ printf '%s' '{"session_id":"sess-1","background_tasks":[]}' | env -u NUDGEWHEN_I
 
 printf '%s' '{"session_id":"sess-1","background_tasks":[]}' | NUDGEWHEN_IDLE_DIR="$dir" sh -c "$cmd"
 [ "$(ls "$dir")" = "nudgewhen-idle-sess-1.json" ] || fail "report name: $(ls "$dir")"
-mode=$(stat -f %Lp "$dir/nudgewhen-idle-sess-1.json" 2>/dev/null || stat -c %a "$dir/nudgewhen-idle-sess-1.json")
+mode=$(python3 -I -c 'import os,sys; print(format(os.stat(sys.argv[1]).st_mode & 0o777, "o"))' "$dir/nudgewhen-idle-sess-1.json")
 [ "$mode" = "600" ] || fail "mode $mode"
 grep -q '"session_id":"sess-1"' "$dir/nudgewhen-idle-sess-1.json" || fail "report body"
+
+printf '%s' '{"background_tasks":[{"session_id":"nested-9"}],"session_id":"sess-2"}' | NUDGEWHEN_IDLE_DIR="$dir" sh -c "$cmd"
+[ -f "$dir/nudgewhen-idle-nested-9.json" ] && fail "named by a nested session_id"
+rm -f "$dir/nudgewhen-idle-sess-2.json"
+
+printf '%s' '{"session_id":"sess-1","stop_hook_active":true,"marker":"active"}' | NUDGEWHEN_IDLE_DIR="$dir" sh -c "$cmd"
+! grep -q marker "$dir/nudgewhen-idle-sess-1.json" || fail "a stop_hook_active stop overwrote the report"
 
 printf '%s' 'not json' | NUDGEWHEN_IDLE_DIR="$dir" sh -c "$cmd"
 [ "$(ls -A "$dir")" = "nudgewhen-idle-sess-1.json" ] || fail "left a temp file: $(ls -A "$dir")"

@@ -73,6 +73,7 @@ const idle = {
   draftWaits: 0,
   retries: 0,
   gen: 0,
+  seq: 0,
   cancel: undefined as (() => void) | undefined,
 }
 
@@ -97,6 +98,7 @@ function arm($: EngineInterface, ms: number) {
 export function resetIdle() {
   invalidate()
   Object.assign(idle, { nudged: new Set<string>(), startedMonitors: new Set<string>(), file: undefined, dir: undefined, sessionId: '', draftWaits: 0, retries: 0 })
+  idle.seq++
 }
 
 /** Empties the report, so a report on disk is always from the turn that just ended. */
@@ -120,8 +122,8 @@ async function fire($: EngineInterface, gen: number) {
   await nudge($, gen)
 }
 
-/** The waits in the report the Stop settings hook wrote at the end of the last turn; undefined when it is missing or unreadable, none when it is not this session's. */
-export function reportedWaits(text: string | undefined, sessionId: string, startedMonitors: ReadonlySet<string>): Wait[] | undefined {
+/** The waits in the report the Stop settings hook wrote at the end of the last turn; undefined when it is missing or unreadable, null when it is not the main turn's report for this session (nothing to act on, nothing to forget). */
+export function reportedWaits(text: string | undefined, sessionId: string, startedMonitors: ReadonlySet<string>): Wait[] | undefined | null {
   let r: unknown
   try {
     r = JSON.parse(text ?? '')
@@ -130,7 +132,7 @@ export function reportedWaits(text: string | undefined, sessionId: string, start
   }
   if (r === null || typeof r !== 'object') return undefined
   const o = r as Record<string, unknown>
-  if (o.session_id !== sessionId || o.stop_hook_active === true || o.agent_id !== undefined) return []
+  if (o.session_id !== sessionId || o.stop_hook_active === true || o.agent_id !== undefined) return null
   const rows = (v: unknown) => (Array.isArray(v) ? v.filter(x => x !== null && typeof x === 'object') : [])
   const tasks = rows(o.background_tasks).filter((t): t is Task => typeof t.id === 'string' && typeof t.type === 'string')
   const crons = rows(o.session_crons).filter((c): c is Cron => typeof c.id === 'string' && typeof c.prompt === 'string')
@@ -153,6 +155,7 @@ async function nudge($: EngineInterface, gen: number) {
     }
     return
   }
+  if (held === null) return
   const heldKeys = new Set(held.map(w => w.key))
   for (const k of [...idle.nudged]) if (!heldKeys.has(k)) idle.nudged.delete(k)
   const due = fresh(held, idle.nudged)
@@ -160,6 +163,7 @@ async function nudge($: EngineInterface, gen: number) {
   const cmds = await $.command.list().catch(() => [])
   if (gen !== idle.gen) return
   const cmd = pickCommand(cmds)
+  const nudged = idle.nudged
   const head = `nudgewhen: idle, holding ${summary(due)}`
   for (const w of due) idle.nudged.add(w.key)
   if (cmd === undefined) {
@@ -173,25 +177,31 @@ async function nudge($: EngineInterface, gen: number) {
   } catch (err) {
     $.ui.log(`nudgewhen idle: command.run: ${String(err)}`, { to: 'debug' })
   }
+  if (gen !== idle.gen) return
   try {
     // The host refuses a submitted prompt that begins with a slash.
     await $.prompt.submit({ text: `Use the ${cmd} skill now.` })
   } catch (err) {
     $.ui.log(`nudgewhen idle: prompt.submit: ${String(err)}`, { to: 'debug' })
     // Nothing ran: leave these waits for the next turn's check.
-    for (const w of due) idle.nudged.delete(w.key)
+    if (gen === idle.gen && nudged === idle.nudged) for (const w of due) nudged.delete(w.key)
     $.ui.toast(`nudgewhen: could not start it; run /${PLUGIN_COMMAND}`, { timeoutMs: 15_000 })
   }
 }
 
 /** Removes the session's report and its private directory. */
 async function removeReport($: EngineInterface) {
-  const { file, dir } = idle
+  const { dir } = idle
   idle.file = undefined
   idle.dir = undefined
+  await removeDir($, dir)
+}
+
+/** Deletes a directory this module made, with whatever the Stop hook left in it. */
+async function removeDir($: EngineInterface, dir: string | undefined) {
+  if (dir === undefined) return
   try {
-    if (file !== undefined) await $.process.run(['rm', '-f', '--', file], { timeoutMs: 5000 })
-    if (dir !== undefined) await $.process.run(['rmdir', dir], { timeoutMs: 5000 })
+    await $.process.run(['rm', '-rf', '--', dir], { timeoutMs: 5000 })
   } catch (err) {
     $.ui.log(`nudgewhen idle: remove report: ${String(err)}`, { to: 'debug' })
   }
@@ -199,6 +209,7 @@ async function removeReport($: EngineInterface) {
 
 /** Stops the check and deletes the report, which holds scheduled prompts. register.ts calls it from its session.end hook. */
 export async function endIdle($: EngineInterface) {
+  idle.seq++
   invalidate()
   await removeReport($)
 }
@@ -213,11 +224,20 @@ async function privateDir($: EngineInterface): Promise<string | undefined> {
 
 async function begin($: EngineInterface) {
   invalidate()
+  // A newer begin or a session end makes this one stale; a stale begin removes what it made and stops.
+  const seq = ++idle.seq
   // A new session in the same process drops the last one's report first.
   await removeReport($)
+  if (seq !== idle.seq) return
   Object.assign(idle, { nudged: new Set<string>(), startedMonitors: new Set<string>(), draftWaits: 0, retries: 0 })
-  idle.sessionId = await $.session.id()
+  const sessionId = await $.session.id()
+  if (seq !== idle.seq) return
+  idle.sessionId = sessionId
   const dir = await privateDir($)
+  if (seq !== idle.seq) {
+    await removeDir($, dir)
+    return
+  }
   if (dir === undefined) {
     $.ui.log('nudgewhen idle: off for this session: no private directory', { to: 'debug' })
     return
@@ -225,6 +245,10 @@ async function begin($: EngineInterface) {
   idle.dir = dir
   // The Stop settings hook in hooks.json writes its input to $NUDGEWHEN_IDLE_DIR/nudgewhen-idle-<its session id>.json.
   const r = await $.env.set('NUDGEWHEN_IDLE_DIR', dir)
+  if (seq !== idle.seq) {
+    await removeDir($, dir)
+    return
+  }
   if (r.deny === undefined) {
     idle.file = `${dir}/nudgewhen-idle-${idle.sessionId}.json`
   } else {

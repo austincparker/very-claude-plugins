@@ -1,12 +1,14 @@
 {
-  "modules": ["./register.ts"],
+  "modules": [
+    "./register.ts"
+  ],
   "hooks": {
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "[ -z \"$NUDGEWHEN_IDLE_DIR\" ] || { umask 077; t=\"$NUDGEWHEN_IDLE_DIR/.nudgewhen-idle.$$\"; cat > \"$t\" && id=$(sed -n 's/^.*\"session_id\" *: *\"\\([A-Za-z0-9_-][A-Za-z0-9_-]*\\)\".*$/\\1/p' \"$t\" | head -n 1) && [ -n \"$id\" ] && mv \"$t\" \"$NUDGEWHEN_IDLE_DIR/nudgewhen-idle-$id.json\" || rm -f \"$t\"; }; exit 0",
+            "command": "[ -z \"$NUDGEWHEN_IDLE_DIR\" ] || { umask 077; t=\"$NUDGEWHEN_IDLE_DIR/.nudgewhen-idle.$$\"; cat > \"$t\" && ! grep -q '\"stop_hook_active\" *: *true' \"$t\" && id=$(sed 's/\\[[^]]*\\]//g' \"$t\" | grep -o '\"session_id\" *: *\"[A-Za-z0-9_-][A-Za-z0-9_-]*\"' | head -n 1 | sed 's/^.*: *\"\\(.*\\)\"$/\\1/') && [ -n \"$id\" ] && mv \"$t\" \"$NUDGEWHEN_IDLE_DIR/nudgewhen-idle-$id.json\" || rm -f \"$t\"; }; exit 0",
             "timeout": 5
           }
         ]
