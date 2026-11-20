@@ -117,7 +117,14 @@ function config(options: PluginOptions): { cfg: Config; warnings: string[] } {
     const v = options[key]
     return typeof v === 'number' ? v : fallback
   }
-  const { controls, warnings } = readControls(options)
+  // One-release alias: 0.3.0's whole-hour bedtime_hour and wake_hour carry over while bedtime and wake still hold their defaults.
+  const hour = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 23 ? `${String(v).padStart(2, '0')}:00` : undefined)
+  const carried: PluginOptions = { ...options }
+  const oldBed = hour(options.bedtime_hour)
+  const oldWake = hour(options.wake_hour)
+  if (oldBed !== undefined && (options.bedtime === undefined || options.bedtime === '23:00')) carried.bedtime = oldBed
+  if (oldWake !== undefined && (options.wake === undefined || options.wake === '05:00')) carried.wake = oldWake
+  const { controls, warnings } = readControls(carried)
   return {
     cfg: {
       sitMin: n('sit_minutes', 30),
@@ -313,10 +320,10 @@ async function ackAll($: EngineInterface, server: string, ids: string[], isLive:
 }
 
 /** Records the outcome of one attempt; returns the nudges to show now. */
-function settle($: EngineInterface, got: Attempt): Promise<{ fresh: HostedNudge[]; ack: string[] }> {
+function settle($: EngineInterface, got: Attempt): Promise<{ fresh: HostedNudge[]; ack: string[]; at: number }> {
   return locked(async () => {
     const now = await $.clock.now()
-    if (!(await ownsFiring($, now))) return { fresh: [], ack: [] }
+    if (!(await ownsFiring($, now))) return { fresh: [], ack: [], at: now }
     const fails = 'nudges' in got ? 0 : (num(await $.store.get('cloudFails')) ?? 0) + 1
     const wasUp = (await $.store.get('cloudUp')) !== false
     await $.store.set('cloudFails', fails)
@@ -325,7 +332,7 @@ function settle($: EngineInterface, got: Attempt): Promise<{ fresh: HostedNudge[
     if ('server' in got) await $.store.set('cloudServer', got.server)
     if ('reason' in got) {
       if (wasUp) $.ui.log(`nudgewhen: hosted nudges unavailable (${got.reason}); local nudges keep running`, { to: 'debug' })
-      return { fresh: [], ack: [] }
+      return { fresh: [], ack: [], at: now }
     }
     if (!wasUp) $.ui.log('nudgewhen: connected to hosted nudges', { to: 'debug' })
     const seen = readSeen(await $.store.get('cloudSeen'), now)
@@ -340,19 +347,19 @@ function settle($: EngineInterface, got: Attempt): Promise<{ fresh: HostedNudge[
     }
     const ack = [...new Set([...pending, ...handedBack, ...fresh.map(n => n.id)])].slice(-PENDING_MAX)
     await $.store.set('cloudPending', ack)
-    return { fresh, ack }
+    return { fresh, ack, at: now }
   })
 }
 
 /** Takes nudges that were marked seen and pending but never shown back out of the store, so the next poll shows them rather than acking them unseen. */
-function unmark($: EngineInterface, unshown: HostedNudge[]): Promise<void> {
+function unmark($: EngineInterface, unshown: HostedNudge[], at: number): Promise<void> {
   const ids = new Set(unshown.map(n => n.id))
   const texts = new Set(unshown.map(n => `${n.source}: ${n.text}`))
   return locked(async () => {
     const now = await $.clock.now()
     await $.store.set('cloudSeen', readSeen(await $.store.get('cloudSeen'), now).filter(s => !ids.has(s.id)))
     await $.store.set('cloudPending', readIds(await $.store.get('cloudPending')).filter(id => !ids.has(id)))
-    await $.store.set('fired', readFired(await $.store.get('fired')).filter(f => !(f.id === 0 && texts.has(f.text))))
+    await $.store.set('fired', readFired(await $.store.get('fired')).filter(f => !(f.id === 0 && f.at === at && texts.has(f.text))))
   })
 }
 
@@ -373,7 +380,7 @@ async function pollCloud($: EngineInterface) {
   try {
     const got = await attempt($)
     if (!isLive()) return
-    const { fresh, ack } = await settle($, got)
+    const { fresh, ack, at } = await settle($, got)
     let shown = 0
     try {
       for (const n of fresh) {
@@ -385,7 +392,7 @@ async function pollCloud($: EngineInterface) {
         shown += 1
       }
     } finally {
-      if (shown < fresh.length) await unmark($, fresh.slice(shown))
+      if (shown < fresh.length) await unmark($, fresh.slice(shown), at)
     }
     if (!isLive()) return
     if (fresh.length > 0) await refreshStatus($)
@@ -703,7 +710,8 @@ async function hostedControl($: EngineInterface, verb: string, arg: string, now:
     if (prefs === null) return HOSTED_FAILED
     if (verb === 'prefs') return prefsLines(prefs, now).join('\n')
     // The server's whole list, not parsePrefs' capped copy: set_prefs replaces the list, so a trimmed one would delete the rest.
-    const all = rawMuted(got) ?? prefs.muted_repos
+    const all = rawMuted(got)
+    if (all === null) return HOSTED_FAILED
     const has = all.some(r => r.toLowerCase() === muted)
     if (verb === 'mute') {
       if (has) return `${muted} is already muted.`
@@ -954,9 +962,9 @@ async function breakPromptNow($: EngineInterface) {
   const sat = satMinutes(readSit(await $.store.get('sit')), now)
   if (sat === null || sat < state.cfg.sitMin || now - state.lastAgentNudge < AGENT_EVERY_MS) return
   if (!isWorkTime(state.cfg.controls, now) || (await isHeldNow($, now))) return
-  state.lastAgentNudge = now
   const line = await say($, 'break', { minutes: sat })
-  if (line !== null && (await isHeldNow($, await $.clock.now()))) return
+  if (await isHeldNow($, await $.clock.now())) return
+  state.lastAgentNudge = now
   $.ui.toast(
     line ?? `Agents have this for a few minutes. You've been at the keyboard ${sat}m: walk, refill your water, stretch.`,
     { timeoutMs: 12_000 },
