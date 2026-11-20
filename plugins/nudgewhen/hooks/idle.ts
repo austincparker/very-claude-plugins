@@ -12,9 +12,11 @@ const RETRY_MS = 30_000
 const RETRY_MAX = 3
 const DRAFT_WAIT_MS = MINUTE
 const DRAFT_WAITS_MAX = 5
-const COMMAND = 'idle-check'
 const PLUGIN = 'nudgewhen'
-const PLUGIN_COMMAND = `${PLUGIN}:${COMMAND}`
+const DESCRIPTOR = 'idle'
+/** A person's own skill under this name runs when they have no `idle-nudge` of their own; it outranks the plugin's `nudgewhen:idle-nudge`. */
+const LEGACY_COMMAND = 'idle-check'
+const PLUGIN_COMMAND = pluginNudgeCommand(DESCRIPTOR)
 
 const LABELS: Record<string, [string, string]> = {
   shell: ['shell', 'shells'],
@@ -45,13 +47,30 @@ export function fresh(ws: readonly Wait[], nudged: ReadonlySet<string>): Wait[] 
   return ws.filter(w => !nudged.has(w.key))
 }
 
-/** The person's own `idle-check` first, then this plugin's, listed bare or with its plugin prefix. */
-export function pickCommand(cmds: readonly CommandInfo[]): string | undefined {
-  if (cmds.some(c => c.name === COMMAND && c.source !== 'plugin')) return COMMAND
-  if (cmds.some(c => c.name === PLUGIN_COMMAND || (c.name === COMMAND && c.source === 'plugin' && c.plugin === PLUGIN))) {
-    return PLUGIN_COMMAND
-  }
+/** Every skill nudgewhen runs for a nudge is named `<descriptor>-nudge`: `idle-nudge` for the idle nudge. */
+export function nudgeCommand<D extends string>(descriptor: D): `${D}-nudge` {
+  return `${descriptor}-nudge`
+}
+
+export function pluginNudgeCommand<D extends string>(descriptor: D): `nudgewhen:${D}-nudge` {
+  return `${PLUGIN}:${nudgeCommand(descriptor)}`
+}
+
+/**
+ * The command a nudge of this descriptor runs: the person's own `<descriptor>-nudge`, then each of `ownFallbacks` in order, then this plugin's, listed bare or with its prefix.
+ * "Own" means a command whose `source` is exactly `user`; a plugin, MCP or built-in command never takes that slot.
+ */
+export function pickNudgeCommand(cmds: readonly CommandInfo[], descriptor: string, ownFallbacks: readonly string[] = []): string | undefined {
+  const own = nudgeCommand(descriptor)
+  for (const name of [own, ...ownFallbacks]) if (cmds.some(c => c.name === name && c.source === 'user')) return name
+  const plugin = pluginNudgeCommand(descriptor)
+  if (cmds.some(c => c.name === plugin || (c.source === 'plugin' && c.plugin === PLUGIN && c.name === own))) return plugin
   return undefined
+}
+
+/** The command the idle nudge runs. */
+export function pickCommand(cmds: readonly CommandInfo[]): string | undefined {
+  return pickNudgeCommand(cmds, DESCRIPTOR, [LEGACY_COMMAND])
 }
 
 export function summary(ws: readonly Wait[]): string {
@@ -166,6 +185,10 @@ async function nudge($: EngineInterface, gen: number) {
   const nudged = idle.nudged
   const head = `nudgewhen: idle, holding ${summary(due)}`
   for (const w of due) idle.nudged.add(w.key)
+  // Nothing ran for these waits yet: let the next turn's check count them again.
+  const unmark = () => {
+    if (nudged === idle.nudged) for (const w of due) nudged.delete(w.key)
+  }
   if (cmd === undefined) {
     $.ui.toast(`${head}; run /${PLUGIN_COMMAND}`, { timeoutMs: 15_000 })
     return
@@ -177,15 +200,17 @@ async function nudge($: EngineInterface, gen: number) {
   } catch (err) {
     $.ui.log(`nudgewhen idle: command.run: ${String(err)}`, { to: 'debug' })
   }
-  if (gen !== idle.gen) return
+  if (gen !== idle.gen) {
+    unmark()
+    return
+  }
   try {
     // The host refuses a submitted prompt that begins with a slash.
     await $.prompt.submit({ text: `Use the ${cmd} skill now.` })
   } catch (err) {
     $.ui.log(`nudgewhen idle: prompt.submit: ${String(err)}`, { to: 'debug' })
-    // Nothing ran: leave these waits for the next turn's check.
-    if (gen === idle.gen && nudged === idle.nudged) for (const w of due) nudged.delete(w.key)
-    $.ui.toast(`nudgewhen: could not start it; run /${PLUGIN_COMMAND}`, { timeoutMs: 15_000 })
+    unmark()
+    if (gen === idle.gen) $.ui.toast(`nudgewhen: could not start it; run /${cmd}`, { timeoutMs: 15_000 })
   }
 }
 
@@ -207,7 +232,7 @@ async function removeDir($: EngineInterface, dir: string | undefined) {
   }
 }
 
-/** Stops the check and deletes the report, which holds scheduled prompts. register.ts calls it from its session.end hook. */
+/** Stops the idle nudge and deletes the report, which holds scheduled prompts. register.ts calls it from its session.end hook. */
 export async function endIdle($: EngineInterface) {
   idle.seq++
   invalidate()
