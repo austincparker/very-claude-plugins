@@ -255,6 +255,35 @@ test('a report left by an earlier turn is not read after a turn the hook did not
   expect(seen.runs.length).toBe(1)
 })
 
+test('a monitor started with the Monitor tool counts', ON, async ($, on) => {
+  const { clock, seen, stop } = world(on)
+  await start($)
+  await $.tool.call({ tool: 'Monitor', description: 'x', timeout_ms: 1000, command: 'true' })
+  await stop($, { tasks: [{ id: 'mon-mine', type: 'monitor' }] })
+  await clock.advance(IDLE_AFTER_MS)
+  expect(seen.runs).toEqual(['nudgewhen:idle-check'])
+})
+
+test('no idle-check command: the toast alone', ON, async ($, on) => {
+  const none = world(on, { commands: [] })
+  const stop = none.stop
+  await start($)
+  await stop($, { tasks: [{ id: 'nc-1', type: 'shell' }] })
+  await none.clock.advance(IDLE_AFTER_MS)
+  expect(none.seen.runs).toEqual([])
+  expect(none.seen.toasts.at(-1)).toMatch(/run \/nudgewhen:idle-check$/)
+})
+
+test('a refused command.run falls back to a prompt, then the toast', ON, async ($, on) => {
+  const { clock, seen, stop } = world(on, { runFails: true, submitFails: true })
+  await start($)
+  await stop($, { tasks: [{ id: 'rf-1', type: 'workflow' }] })
+  await clock.advance(IDLE_AFTER_MS)
+  expect(seen.runs).toEqual(['nudgewhen:idle-check'])
+  expect(seen.submits).toEqual(['Use the nudgewhen:idle-check skill now.'])
+  expect(seen.toasts.at(-1)).toMatch(/run \/nudgewhen:idle-check$/)
+})
+
 test('reportedWaits reads nothing from a missing or broken report', () => {
   const rows: [string | undefined, number][] = [
     [undefined, 0],

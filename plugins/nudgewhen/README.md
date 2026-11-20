@@ -55,6 +55,10 @@ Turn on **Nudge sessions when idle?** and nudgewhen runs it for you. When Claude
 
 It needs plugin hooks turned on, since it reads Claude Code's own end-of-turn report of background work; with hooks off it finds no report and does nothing. The report goes to a private temporary directory made for the session and is deleted when the session ends. With the setting off, the plugin's Stop hook still starts a shell at the end of each turn, and the shell exits at once without writing anything. The check runs a turn, which uses your usage, so the setting is off by default.
 
+## Development
+
+`claude plugin test plugins/nudgewhen` runs the unit tests. It cannot start processes, so run `sh plugins/nudgewhen/tests/stop-hook.sh` as well to check the Stop hook command in `hooks/hooks.json`.
+
 ## License
 
 MIT
