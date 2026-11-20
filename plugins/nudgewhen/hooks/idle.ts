@@ -12,9 +12,11 @@ const RETRY_MS = 30_000
 const RETRY_MAX = 3
 const DRAFT_WAIT_MS = MINUTE
 const DRAFT_WAITS_MAX = 5
-const COMMAND = 'idle-check'
 const PLUGIN = 'nudgewhen'
-const PLUGIN_COMMAND = `${PLUGIN}:${COMMAND}`
+const DESCRIPTOR = 'idle'
+/** The name before `-nudge` was adopted; a person's own skill under it still runs, after one named `idle-nudge`. */
+const LEGACY_COMMAND = 'idle-check'
+const PLUGIN_COMMAND = pluginNudgeCommand(DESCRIPTOR)
 
 const LABELS: Record<string, [string, string]> = {
   shell: ['shell', 'shells'],
@@ -45,13 +47,27 @@ export function fresh(ws: readonly Wait[], nudged: ReadonlySet<string>): Wait[] 
   return ws.filter(w => !nudged.has(w.key))
 }
 
-/** The person's own `idle-check` first, then this plugin's, listed bare or with its plugin prefix. */
-export function pickCommand(cmds: readonly CommandInfo[]): string | undefined {
-  if (cmds.some(c => c.name === COMMAND && c.source !== 'plugin')) return COMMAND
-  if (cmds.some(c => c.name === PLUGIN_COMMAND || (c.name === COMMAND && c.source === 'plugin' && c.plugin === PLUGIN))) {
-    return PLUGIN_COMMAND
-  }
+/** Every skill nudgewhen runs for a nudge is named `<descriptor>-nudge`: `idle-nudge` for the idle nudge. */
+export function nudgeCommand(descriptor: string): string {
+  return `${descriptor}-nudge`
+}
+
+export function pluginNudgeCommand(descriptor: string): string {
+  return `${PLUGIN}:${nudgeCommand(descriptor)}`
+}
+
+/** For a nudge of the given descriptor: the person's own `<descriptor>-nudge` first, then any extra names of their own in order, then this plugin's, listed bare or with its plugin prefix. */
+export function pickNudgeCommand(cmds: readonly CommandInfo[], descriptor: string, ownFallbacks: readonly string[] = []): string | undefined {
+  const own = nudgeCommand(descriptor)
+  for (const name of [own, ...ownFallbacks]) if (cmds.some(c => c.name === name && c.source !== 'plugin')) return name
+  const plugin = pluginNudgeCommand(descriptor)
+  if (cmds.some(c => c.name === plugin || (c.name === own && c.source === 'plugin' && c.plugin === PLUGIN))) return plugin
   return undefined
+}
+
+/** The command the idle nudge runs. */
+export function pickCommand(cmds: readonly CommandInfo[]): string | undefined {
+  return pickNudgeCommand(cmds, DESCRIPTOR, [LEGACY_COMMAND])
 }
 
 export function summary(ws: readonly Wait[]): string {

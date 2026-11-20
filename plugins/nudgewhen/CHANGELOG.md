@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0]
+
+### Changed
+
+- Nudge skills are named `<descriptor>-nudge`. The idle check skill is now `nudgewhen:idle-nudge`, and your own override is `idle-nudge`.
+- A skill of your own named `idle-check` still runs when there is no `idle-nudge`. The fallback will be removed in a later release.
+
 ## [0.2.0]
 
 ### Added

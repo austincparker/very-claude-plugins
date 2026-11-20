@@ -2,11 +2,11 @@ import type { CommandInfo, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { IDLE_AFTER_MS, pickCommand, reportedWaits, resetIdle } from '../hooks/idle'
+import { IDLE_AFTER_MS, nudgeCommand, pickCommand, pickNudgeCommand, pluginNudgeCommand, reportedWaits, resetIdle } from '../hooks/idle'
 import { MINUTE } from '../hooks/schedule'
 
 const ON = { options: { idle_nudge: true } }
-const PLUGIN_CMD: CommandInfo = { name: 'nudgewhen:idle-check', description: '', source: 'plugin', plugin: 'nudgewhen' }
+const PLUGIN_CMD: CommandInfo = { name: 'nudgewhen:idle-nudge', description: '', source: 'plugin', plugin: 'nudgewhen' }
 
 type Stop = { tasks?: readonly { id: string; type: string }[]; crons?: readonly { id: string; prompt: string }[]; session?: string; active?: boolean; report?: string | null }
 type World = { commands?: CommandInfo[]; draft?: () => string; runFails?: boolean; submitFails?: boolean; envFails?: boolean; mktempFails?: boolean }
@@ -113,8 +113,8 @@ test('a shell held two minutes runs the check once per wait', ON, async ($, on) 
   await clock.advance(IDLE_AFTER_MS - 1000)
   expect(seen.runs).toEqual([])
   await clock.advance(1000)
-  expect(seen.runs).toEqual(['nudgewhen:idle-check'])
-  expect(seen.toasts).toEqual(['nudgewhen: idle, holding 2 waits (1 shell, 1 wake-up); running /nudgewhen:idle-check'])
+  expect(seen.runs).toEqual(['nudgewhen:idle-nudge'])
+  expect(seen.toasts).toEqual(['nudgewhen: idle, holding 2 waits (1 shell, 1 wake-up); running /nudgewhen:idle-nudge'])
 
   await stop($, { tasks: [{ id: 'sh-1', type: 'shell' }], crons: [{ id: 'c2', prompt: 'check ci' }] })
   await clock.advance(IDLE_AFTER_MS)
@@ -144,7 +144,7 @@ test('a draft in the prompt box postpones the check', ON, async ($, on) => {
   expect(seen.runs).toEqual([])
   draft = ''
   await clock.advance(MINUTE)
-  expect(seen.runs).toEqual(['nudgewhen:idle-check'])
+  expect(seen.runs).toEqual(['nudgewhen:idle-nudge'])
 })
 
 test('a turn that starts cancels the pending check, and the next turn end re-arms it', ON, async ($, on) => {
@@ -159,7 +159,7 @@ test('a turn that starts cancels the pending check, and the next turn end re-arm
   await clock.advance(IDLE_AFTER_MS - 1000)
   expect(seen.runs).toEqual([])
   await clock.advance(1000)
-  expect(seen.runs).toEqual(['nudgewhen:idle-check'])
+  expect(seen.runs).toEqual(['nudgewhen:idle-nudge'])
 })
 
 test('an aborted turn does not read the report of an earlier one', ON, async ($, on) => {
@@ -258,17 +258,17 @@ test('a monitor started with the Monitor tool counts', ON, async ($, on) => {
   await $.tool.call({ tool: 'Monitor', description: 'x', timeout_ms: 1000, command: 'true' })
   await stop($, { tasks: [{ id: 'mon-mine', type: 'monitor' }] })
   await clock.advance(IDLE_AFTER_MS)
-  expect(seen.runs).toEqual(['nudgewhen:idle-check'])
+  expect(seen.runs).toEqual(['nudgewhen:idle-nudge'])
 })
 
-test('no idle-check command: the toast alone', ON, async ($, on) => {
+test('no idle-nudge command: the toast alone', ON, async ($, on) => {
   const none = world(on, { commands: [] })
   const stop = none.stop
   await start($)
   await stop($, { tasks: [{ id: 'nc-1', type: 'shell' }] })
   await none.clock.advance(IDLE_AFTER_MS)
   expect(none.seen.runs).toEqual([])
-  expect(none.seen.toasts.at(-1)).toMatch(/run \/nudgewhen:idle-check$/)
+  expect(none.seen.toasts.at(-1)).toMatch(/run \/nudgewhen:idle-nudge$/)
 })
 
 test('a refused command.run falls back to a prompt, then the toast', ON, async ($, on) => {
@@ -276,9 +276,9 @@ test('a refused command.run falls back to a prompt, then the toast', ON, async (
   await start($)
   await stop($, { tasks: [{ id: 'rf-1', type: 'workflow' }] })
   await clock.advance(IDLE_AFTER_MS)
-  expect(seen.runs).toEqual(['nudgewhen:idle-check'])
-  expect(seen.submits).toEqual(['Use the nudgewhen:idle-check skill now.'])
-  expect(seen.toasts.at(-1)).toMatch(/run \/nudgewhen:idle-check$/)
+  expect(seen.runs).toEqual(['nudgewhen:idle-nudge'])
+  expect(seen.submits).toEqual(['Use the nudgewhen:idle-nudge skill now.'])
+  expect(seen.toasts.at(-1)).toMatch(/run \/nudgewhen:idle-nudge$/)
 })
 
 test('a stop-hook-active report does not make nudged waits count as new', ON, async ($, on) => {
@@ -303,15 +303,30 @@ test('reportedWaits reads nothing from a missing or broken report', () => {
   for (const [text, want] of rows) expect(reportedWaits(text, 's', new Set())?.length ?? 0).toBe(want)
 })
 
-test('pickCommand prefers the person\'s own idle-check', () => {
-  const own: CommandInfo = { name: 'idle-check', description: '', source: 'user' }
-  const other: CommandInfo = { name: 'idle-check', description: '', source: 'plugin', plugin: 'else' }
+test('pickCommand prefers the person\'s own idle-nudge, then a legacy idle-check, then the plugin\'s', () => {
+  const own: CommandInfo = { name: 'idle-nudge', description: '', source: 'user' }
+  const legacy: CommandInfo = { name: 'idle-check', description: '', source: 'user' }
+  const other: CommandInfo = { name: 'idle-nudge', description: '', source: 'plugin', plugin: 'else' }
+  const oldPlugin: CommandInfo = { name: 'nudgewhen:idle-check', description: '', source: 'plugin', plugin: 'nudgewhen' }
   const rows: [CommandInfo[], string | undefined][] = [
-    [[PLUGIN_CMD, own], 'idle-check'],
-    [[PLUGIN_CMD, other], 'nudgewhen:idle-check'],
-    [[{ name: 'idle-check', description: '', source: 'plugin', plugin: 'nudgewhen' }], 'nudgewhen:idle-check'],
+    [[PLUGIN_CMD, own], 'idle-nudge'],
+    [[PLUGIN_CMD, legacy, own], 'idle-nudge'],
+    [[PLUGIN_CMD, legacy], 'idle-check'],
+    [[PLUGIN_CMD, other], 'nudgewhen:idle-nudge'],
+    [[{ name: 'idle-nudge', description: '', source: 'plugin', plugin: 'nudgewhen' }], 'nudgewhen:idle-nudge'],
+    [[oldPlugin], undefined],
     [[other], undefined],
     [[], undefined],
   ]
   for (const [cmds, want] of rows) expect(pickCommand(cmds)).toBe(want)
+})
+
+test('every nudge skill is named <descriptor>-nudge', () => {
+  expect(nudgeCommand('idle')).toBe('idle-nudge')
+  expect(pluginNudgeCommand('bedtime')).toBe('nudgewhen:bedtime-nudge')
+  const own: CommandInfo = { name: 'bedtime-nudge', description: '', source: 'user' }
+  const plugin: CommandInfo = { name: 'nudgewhen:bedtime-nudge', description: '', source: 'plugin', plugin: 'nudgewhen' }
+  expect(pickNudgeCommand([plugin, own], 'bedtime')).toBe('bedtime-nudge')
+  expect(pickNudgeCommand([plugin], 'bedtime')).toBe('nudgewhen:bedtime-nudge')
+  expect(pickNudgeCommand([own], 'idle')).toBeUndefined()
 })
