@@ -391,6 +391,24 @@ def user_settings():
     return os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "settings.json")
 
 
+def forget_project(path):
+    """Drops the trust and import consent the CLI saved for a scratch directory from the user's .claude.json."""
+    cfg = os.environ.get("CLAUDE_CONFIG_DIR")
+    f = os.path.join(cfg, ".claude.json") if cfg else os.path.expanduser("~/.claude.json")
+    try:
+        with open(f) as fh:
+            d = json.load(fh)
+        if not isinstance(d.get("projects"), dict) or path not in d["projects"]:
+            return
+        del d["projects"][path]
+        tmp = f + ".nudgewhen-probe.tmp"
+        with open(tmp, "w") as fh:
+            json.dump(d, fh, indent=2)
+        os.replace(tmp, f)
+    except (OSError, ValueError):
+        pass
+
+
 def stdin_keys(path):
     try:
         with open(path) as f:
@@ -684,7 +702,7 @@ def smoke():
         for f in ("stdin-wrap.json", "stdin-scratch.json"):
             k = stdin_keys(os.path.join(RUN, f))
             keys.append("%s: %s" % (f, "missing" if k is None else "keys=%s; %s; basename(current_dir)==D: %s" % (
-                ",".join(k[0]), ", ".join("%s=%s" % x for x in k[1].items()), k[2] == (D0 if "wrap" in f else "?scratch"))))
+                ",".join(k[0]), ", ".join("%s=%s" % x for x in k[1].items()), k[2] == (D0 if "wrap" in f else (os.path.basename(SCR) if SCR else None)))))
     except Exception as e:
         body.append("failure: %r" % e)
         results.append(False)
@@ -692,6 +710,8 @@ def smoke():
         kill_all(signal.SIGKILL)
         for sid in SIDS:
             cleanup(sid)
+        if SCR:
+            forget_project(SCR)
         for d in (SCR, RUN):
             if d:
                 shutil.rmtree(d, ignore_errors=True)
