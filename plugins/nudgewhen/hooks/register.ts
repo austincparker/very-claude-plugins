@@ -1179,13 +1179,17 @@ export const register: Register = (on, options) => {
     setHosted(undefined)
     // The launcher keeps wrap's last good prior output beside the segment file, as <session>.prior.
     // Wait for a redraw already in flight, so it cannot recreate the file after the rm.
-    await state.refresh
+    await timed($, state.refresh).catch(() => undefined)
     const path = state.filePath ?? (await segmentPath($))
     if (path !== null) {
       const base = path.replace(/\.txt$/, '')
       if ((await run($, ['rm', '-f', path, `${path}.tmp`, `${base}.prior`])) === null) {
         $.ui.log(`nudgewhen: could not remove ${path}`, { to: 'debug' })
       }
+      // The launcher's per-process temp files for this session.
+      const dir = path.slice(0, path.lastIndexOf('/'))
+      const name = path.slice(dir.length + 1).replace(/\.txt$/, '')
+      await run($, ['find', dir, '-maxdepth', '1', '-name', `${name}.prior.*`, '-delete'])
     }
     state.filePath = undefined
     state.fileBody = undefined

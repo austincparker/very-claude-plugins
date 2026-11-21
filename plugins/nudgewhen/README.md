@@ -200,7 +200,7 @@ It needs plugin hooks turned on, since it reads Claude Code's own end-of-turn re
 
 ## Development
 
-`claude plugin test plugins/nudgewhen` runs the unit tests. It cannot start processes, so run `sh plugins/nudgewhen/tests/stop-hook.sh` as well to check the Stop hook command in `hooks/hooks.json`.
+`claude plugin test plugins/nudgewhen` runs the unit tests. It cannot start processes, so run `sh plugins/nudgewhen/tests/stop-hook.sh` as well to check the Stop hook command in `hooks/hooks.json`. `sh plugins/nudgewhen/tests/statusline-launcher.sh` tests the status line launcher the same way.
 
 ## License
 

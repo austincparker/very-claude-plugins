@@ -26,10 +26,17 @@ export function readMode(layers: readonly SettingsLayer[]): StatusMode | null {
       if (!isOwnKey(key) || !isObj(cfg) || !isObj(cfg.options)) continue
       const v = cfg.options.status_line
       if (v === undefined) continue
-      return v === 'wrap' || v === 'only' ? v : null
+      const mode = typeof v === 'string' ? v.trim().toLowerCase() : ''
+      return mode === 'wrap' || mode === 'only' ? mode : null
     }
   }
   return null
+}
+
+/** True when Claude Code will not run a non-managed `statusLine`: hooks are all disabled, or only managed hooks run. */
+function hooksOff(layers: readonly SettingsLayer[], prior: Readonly<Obj>): boolean {
+  if (prior.disableAllHooks === true || layers.some(l => l.settings.disableAllHooks === true)) return true
+  return layers.some(l => l.source === 'policy' && l.settings.allowManagedHooksOnly === true)
 }
 
 /** True when `v` is a `statusLine` setting that runs the plugin's launcher, wherever the plugin is installed. */
@@ -46,7 +53,7 @@ export function stateDir(cfg: string | undefined, home: string | undefined): str
 
 /** The segment file: a version and time stamp, the order line, then one `name<TAB>text` row per non-empty text. */
 export function segmentFile(now: number, list: string, rows: readonly (readonly [string, string])[]): string {
-  const flat = (s: string) => s.replace(/[\t\r\n]/g, ' ')
+  const flat = (s: string) => s.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
   const body = rows.filter(([, text]) => text !== '').map(([name, text]) => `${flat(name)}\t${flat(text)}\n`)
   return `v1 ${now}\n${flat(list)}\n${body.join('')}`
 }
@@ -70,12 +77,13 @@ const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
 
 /**
  * The settings with `statusLine` pointed at the plugin's script, or null when the read is to pass through:
- * the option is off or invalid, or the policy layer holds `statusLine`. Pure: the same inputs give the same answer.
+ * the option is off or invalid, the policy layer holds `statusLine`, or hooks are disabled. Pure: the same inputs give the same answer.
  */
 export function answer(layers: readonly SettingsLayer[], prior: Readonly<Obj>, root: string): Obj | null {
   const mode = readMode(layers)
   if (mode === null) return null
   if (layers.some(l => l.source === 'policy' && l.settings.statusLine !== undefined)) return null
+  if (hooksOff(layers, prior)) return null
   const old = isObj(prior.statusLine) ? prior.statusLine : {}
   // A statusLine that already runs the launcher is not wrapped again: its own prior command is carried over.
   const cmd =

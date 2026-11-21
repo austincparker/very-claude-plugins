@@ -2,7 +2,7 @@
 # nudgewhen status line launcher.
 # Usage: statusline <mode> <state dir> <base64 of prior command | ->
 # Reads Claude Code's status JSON on stdin once. In `wrap` mode it runs the prior status line command
-# (bounded at 1 second) and prints its rows first, then one row of nudgewhen segments from
+# (stopped after 1 second, killed after 2) and prints its rows first, then one row of nudgewhen segments from
 # <state dir>/<session id>.txt. Any other mode behaves like `only`. Always exits 0.
 
 exec 2>/dev/null
@@ -14,18 +14,25 @@ prior_pid=
 dog_pid=
 
 out=
-# Stop the prior command and its children, and the watchdog; leave no temp file behind.
-reap() {
-  kids=$(pgrep -P "$1")
-  kill "$1"
-  [ -z "$kids" ] || kill $kids
+# Every descendant of pid $1, deepest first.
+descend() {
+  for c in $(pgrep -P "$1"); do
+    descend "$c"
+    printf '%s\n' "$c"
+  done
 }
+# reap <pid> [signal]: signal the process and all its descendants.
+reap() {
+  kids=$(descend "$1")
+  kill -"${2:-TERM}" "$1" $kids
+}
+# Stop the prior command and its children, and the watchdog; leave no temp file behind.
 stop() {
   [ -z "$prior_pid" ] || reap "$prior_pid"
   [ -z "$dog_pid" ] || reap "$dog_pid"
   [ -z "$out" ] || rm -f "$out"
 }
-trap 'stop; exit 0' TERM INT
+trap 'stop; exit 0' TERM INT HUP PIPE
 
 input=$(cat)
 
@@ -49,13 +56,21 @@ if [ "$mode" = wrap ] && [ -n "$b64" ] && [ "$b64" != - ]; then
     if [ -n "$cache" ]; then
       out=$cache.prior.$$
     else
-      out=${TMPDIR:-/tmp}/nudgewhen-prior.$$
+      out=$(mktemp "${TMPDIR:-/tmp}/nudgewhen-prior.XXXXXX") || out=
     fi
+    # Temp files a killed launcher left behind, and a prior cache its session no longer owns.
+    [ -z "$dir" ] || find "$dir" -maxdepth 1 \( -name '*.prior' -o -name '*.prior.*' \) -mmin +10 -exec rm -f {} +
     /bin/sh -c "$cmd" >"$out" <<NUDGEWHEN_INPUT &
 $input
 NUDGEWHEN_INPUT
     prior_pid=$!
-    (sleep 1; reap "$prior_pid") >/dev/null 2>&1 &
+    (
+      p=$prior_pid
+      sleep 1
+      reap "$p"
+      sleep 1
+      kill -0 "$p" && reap "$p" KILL
+    ) >/dev/null 2>&1 &
     dog_pid=$!
     wait "$prior_pid"
     rc=$?
@@ -73,12 +88,11 @@ NUDGEWHEN_INPUT
       rm -f "$out"
     fi
     out=
-    # A cached prior older than two minutes is dropped, like the segment file.
-    if [ -n "$cache" ] && [ -f "$cache.prior" ] && [ -z "$(find "$cache.prior" -mmin -2)" ]; then
-      rm -f "$cache.prior"
-    fi
+    # A cached prior older than two minutes is not shown, like the segment file.
     if [ -n "$cache" ] && [ -f "$cache.prior" ]; then
-      awk '{ printf "%s\033[0m\n", $0 }' "$cache.prior"
+      pm=$(stat -c %Y "$cache.prior" || stat -f %m "$cache.prior")
+      case $pm in '' | *[!0-9]*) pm=0 ;; esac
+      [ $(($(date +%s) - pm)) -lt 120 ] && awk '{ printf "%s\033[0m\n", $0 }' "$cache.prior"
     fi
   fi
 fi
@@ -111,7 +125,7 @@ age=$((now - ${secs:-0}))
 jqout=
 if command -v jq >/dev/null; then
   jqout=$(printf '%s' "$input" | jq -r '
-    def row(n; t): try (t | select(type == "string" and . != "") | gsub("[\t\r\n]"; " ") | n + "\t" + .) catch empty;
+    def row(n; t): try (t | select(type == "string" and . != "") | gsub("[\u0000-\u001f\u007f-\u009f]"; " ") | n + "\t" + .) catch empty;
     row("effort"; .effort.level | select(type == "string" and . != "") | "effort " + .),
     row("fast"; select(.fast_mode == true) | "fast"),
     row("vim"; .vim.mode | select(type == "string" and . != "") | "vim " + .),

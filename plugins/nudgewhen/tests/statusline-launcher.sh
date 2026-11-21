@@ -134,7 +134,7 @@ fi
 json='{"session_id":"s1","cwd":"/a/b","effort":{"level":"high"},"fast_mode":true}'
 nobin=$T/nojq
 mkdir -p "$nobin"
-for t in cat tr sed head awk date mkdir mv rm sleep base64 dirname pgrep find; do
+for t in cat tr sed head awk date mkdir mv rm sleep base64 dirname pgrep find stat mktemp; do
   p=$(command -v "$t") && ln -sf "$p" "$nobin/$t"
 done
 reset
@@ -220,7 +220,42 @@ printf 'old\n' >"$state/s1.prior"
 touch -t 200001010000 "$state/s1.prior"
 run wrap "$(b64 'exit 1')"
 expect 'a stale cached prior is not replayed' "x" "$out"
-check 'a stale cached prior is removed' [ ! -f "$state/s1.prior" ]
+
+# --- orphan temp files and a long-dead prior cache are swept ---
+reset
+seg s1 "$(now_ms)" 'sit' "sit${TAB}x"
+printf 'orphan\n' >"$state/s1.prior.999"
+printf 'dead\n' >"$state/s2.prior"
+touch -t 200001010000 "$state/s1.prior.999" "$state/s2.prior"
+printf 'fresh\n' >"$state/s3.prior"
+run wrap "$(b64 'echo p')"
+check 'an old per-process temp file is swept' [ ! -e "$state/s1.prior.999" ]
+check 'an old prior cache of another session is swept' [ ! -e "$state/s2.prior" ]
+check 'a recent prior cache of another session stays' [ -e "$state/s3.prior" ]
+
+# --- a prior that ignores TERM is killed ---
+reset
+seg s1 "$(now_ms)" 'sit' "sit${TAB}x"
+start=$(date +%s)
+run wrap "$(b64 "trap '' TERM; sleep 5; echo late")"
+end=$(date +%s)
+check 'a TERM-ignoring prior returns in under 4 s' [ $((end - start)) -lt 4 ]
+
+# --- control characters in a field do not reach the terminal ---
+reset
+json='{"session_id":"s1","cwd":"/w/a\u001b[31mb"}'
+seg s1 "$(now_ms)" 'dir'
+run only -
+case $out in *"$ESC"*) fail 'escape in a directory is stripped' ;; *) pass 'escape in a directory is stripped' ;; esac
+
+# --- null fields ---
+reset
+json='{"session_id":"s1","effort":null,"cost":null,"context_window":{"current_usage":null,"used_percentage":null},"rate_limits":null,"workspace":null,"pr":null,"vim":null}'
+seg s1 "$(now_ms)" 'effort,cost,dir,sit' "sit${TAB}x"
+run only -
+expect 'null fields leave only the plain segment' x "$out"
+expect 'null fields exit 0' 0 "$rc"
+
 
 # --- a terminated launcher leaves no temp file ---
 reset

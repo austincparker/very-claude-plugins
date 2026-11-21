@@ -20,7 +20,22 @@ test('an option missing or off passes through', () => {
 })
 
 test('an invalid option passes through', () => {
-  for (const v of ['WRAP', 1, true, '', null, ['wrap']]) expect(answer([cfg(v)], {}, ROOT)).toBeNull()
+  for (const v of ['wrapx', 1, true, '', null, ['wrap']]) expect(answer([cfg(v)], {}, ROOT)).toBeNull()
+})
+
+test('the option is read without regard to case or padding', () => {
+  expect(readMode([cfg('Wrap')])).toBe('wrap')
+  expect(readMode([cfg(' ONLY ')])).toBe('only')
+})
+
+test('disabled hooks pass through', () => {
+  const off: SettingsLayer = { source: 'user', settings: { disableAllHooks: true } }
+  expect(answer([cfg('wrap'), off], {}, ROOT)).toBeNull()
+  expect(answer([cfg('wrap')], { disableAllHooks: true }, ROOT)).toBeNull()
+  const managed: SettingsLayer = { source: 'policy', settings: { allowManagedHooksOnly: true } }
+  expect(answer([cfg('wrap'), managed], {}, ROOT)).toBeNull()
+  const notManaged: SettingsLayer = { source: 'user', settings: { allowManagedHooksOnly: true } }
+  expect(answer([cfg('wrap'), notManaged], {}, ROOT)).not.toBeNull()
 })
 
 test('only the plugin own keys count', () => {
@@ -159,6 +174,10 @@ test('a statusLine that already runs the launcher is not wrapped again', () => {
   const first = answer([cfg('wrap')], { statusLine: { type: 'command', command: 'echo hi' } }, ROOT)!
   const second = answer([cfg('wrap')], first, ROOT)!
   expect((second.statusLine as { command: string }).command).toBe((first.statusLine as { command: string }).command)
+})
+
+test('control characters in a row cannot reach the terminal', () => {
+  expect(segmentFile(1, 'a', [['n', 'x\u001b[31my\u009bz']])).toBe('v1 1\na\nn\tx [31my z\n')
 })
 
 test('tabs and newlines in the list and names cannot add rows', () => {
