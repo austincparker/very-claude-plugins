@@ -34,6 +34,7 @@ import {
 } from './hosted'
 import { KINDS as LINE_KINDS, LINES_MAX, kindForSource, render, parseLine, pickLine, readLines, readTone } from './lines'
 import type { Kind, Line, Tone } from './lines'
+import { SESSION_ID, carried, register as registerStatusLine, segmentFile, stateDir } from './statusline'
 import { TITLES_MAX, cleanTitle, isGhostty, parseTitleArgs, readTitlesOn, titleArgv, ttyPath } from './titles'
 import { MINUTE, USAGE, afterFiring, clock, dayHint, describe, parseWhen, span } from './schedule'
 import { endIdle, registerIdle } from './idle'
@@ -47,6 +48,7 @@ import {
   breaksText,
   contextText,
   costText,
+  isLauncherName,
   isPaid,
   joinSegments,
   limitsText,
@@ -57,7 +59,8 @@ import {
   sitText,
   unknownSegments,
 } from './status'
-import type { Free, Paid } from './status'
+import { LAUNCHER, SEPARATOR } from './status'
+import type { Free, Launcher, Paid } from './status'
 import { SAMPLE_MS, isSampler, localStamp, num, readLog, readSit, report, satMinutes, step } from './sitting'
 
 type Config = { sitMin: number; awayMin: number; bedtime: boolean; controls: Controls; segments: string; tone: Tone; titles: boolean }
@@ -75,6 +78,7 @@ const REPROBE_MS = 10 * MINUTE
 const TOOL = 'mcp__nudgewhen__nudge'
 const CLOUD = 'nudgewhen'
 const BRANCH_MS = MINUTE
+const FILE_REWRITE_MS = MINUTE
 
 const TOOL_DESCRIPTION = [
   "Sets, lists or cancels the person's nudges: reminders that show in Claude Code and as a desktop notification when due.",
@@ -93,6 +97,10 @@ const fresh = () => ({
   sessionId: '',
   lastAgentNudge: 0,
   lastStatus: undefined as string | undefined,
+  fileBody: undefined as string | undefined,
+  fileAt: 0,
+  filePath: undefined as string | undefined,
+  isEnded: false,
   ticks: 0,
   isBusy: false,
   cloudRun: undefined as object | undefined,
@@ -497,11 +505,12 @@ async function branchName($: EngineInterface, now: number): Promise<string> {
 /** One status segment's text, empty when it has nothing to show. `seg.sat` is null outside work hours, so break nudges stay quiet there. */
 async function segment(
   $: EngineInterface,
-  name: Free | Paid,
+  name: Free | Paid | Launcher,
   now: number,
   seg: { sat: number | null; usage: SessionUsage | null | undefined },
 ): Promise<string> {
   const { cfg } = state
+  if (isLauncherName(name)) return ''
   if (isPaid(name)) return paidText(name, now)
   switch (name) {
     case 'sit':
@@ -544,6 +553,53 @@ function shownFired($: EngineInterface, now: number): Promise<Fired[]> {
   })
 }
 
+/** Whether the settings run the plugin's launcher as the status line. */
+async function hasLauncher(_$: EngineInterface): Promise<boolean> {
+  return carried.value
+}
+
+async function onTerminal($: EngineInterface): Promise<boolean> {
+  try {
+    return (await $.session.surfaces()).includes('terminal')
+  } catch {
+    return false
+  }
+}
+
+/** The path of this session's segment file; null when the launcher would not look there. */
+async function segmentPath($: EngineInterface): Promise<string | null> {
+  const dir = stateDir(await $.env.get('CLAUDE_CONFIG_DIR'), await $.env.get('HOME'))
+  return dir === null || !SESSION_ID.test(state.sessionId) ? null : `${dir}/${state.sessionId}.txt`
+}
+
+/** Writes the segment file when its body or path changed or a minute has passed, so the launcher never reads a stale stamp. */
+async function writeSegments($: EngineInterface, now: number, list: string, rows: [string, string][]) {
+  if (state.isEnded) return
+  const path = await segmentPath($)
+  if (path === null) return
+  const body = segmentFile(0, list, rows)
+  if (path === state.filePath && body === state.fileBody && now - state.fileAt < FILE_REWRITE_MS) return
+  const prev = { body: state.fileBody, at: state.fileAt, path: state.filePath }
+  state.fileBody = body
+  state.fileAt = now
+  state.filePath = path
+  // Write beside the target and rename, so the launcher never reads a partly written file.
+  const tmp = `${path}.tmp`
+  try {
+    if ((await run($, ['mkdir', '-p', path.slice(0, path.lastIndexOf('/'))])) === null) throw new Error('mkdir failed')
+    await $.fs.write(tmp, segmentFile(now, list, rows))
+    if ((await run($, ['mv', '-f', tmp, path])) === null) throw new Error('mv failed')
+    // session.end may have cleaned up while this write was in flight.
+    if (state.isEnded) await run($, ['rm', '-f', path, tmp])
+  } catch (err) {
+    await run($, ['rm', '-f', tmp])
+    state.fileBody = prev.body
+    state.fileAt = prev.at
+    state.filePath = prev.path ?? path
+    $.ui.log(`nudgewhen: ${String(err)}`, { to: 'debug' })
+  }
+}
+
 async function redraw($: EngineInterface) {
   const { cfg } = state
   const now = await $.clock.now()
@@ -552,7 +608,22 @@ async function redraw($: EngineInterface) {
   const sat = satMinutes(readSit(await $.store.get('sit')), now)
   const isWork = isWorkTime(cfg.controls, now)
   const seg = { sat: isWork ? sat : null, usage: undefined as SessionUsage | null | undefined }
-  for (const name of parseSegments(cfg.segments)) parts.push(await segment($, name, now, seg))
+  const names = parseSegments(cfg.segments)
+  const rows: [string, string][] = shown.length > 0 ? [['nudge', parts.join(SEPARATOR)]] : []
+  for (const name of names) {
+    const text = await segment($, name, now, seg)
+    parts.push(text)
+    rows.push([name, text])
+  }
+  if ((await hasLauncher($)) && (await onTerminal($))) {
+    // The launcher draws the row: leave ui.status empty so the text shows once.
+    if (state.lastStatus !== undefined) {
+      state.lastStatus = undefined
+      $.ui.status(undefined)
+    }
+    await writeSegments($, now, (shown.length > 0 ? ['nudge', ...names] : names).join(','), rows)
+    return
+  }
   const text = joinSegments(parts) || undefined
   if (text !== state.lastStatus) {
     state.lastStatus = text
@@ -655,7 +726,7 @@ async function hold($: EngineInterface, h: Hold) {
 }
 
 async function statusCommand($: EngineInterface, arg: string): Promise<string> {
-  const known = `Free: ${FREE.join(', ')}\nHosted: ${PAID.join(', ')}`
+  const known = `Free: ${FREE.join(', ')}\nHosted: ${PAID.join(', ')}\nLauncher (with /nudge statusline): ${LAUNCHER.join(', ')}`
   if (arg === '') {
     return `Status line: ${parseSegments(state.cfg.segments).join(',')}\n${known}\nSet it with /nudge status <list>, in the order to show.`
   }
@@ -663,6 +734,32 @@ async function statusCommand($: EngineInterface, arg: string): Promise<string> {
   if (unknown.length > 0) return `Unknown: ${unknown.join(', ')}\n${known}`
   const list = parseSegments(arg).join(',')
   return (await setting($, 'status_segments', list)) ?? `Status line is now: ${list}.`
+}
+
+const STATUSLINE_USAGE = 'Usage: /nudge statusline wrap|only|off'
+
+/** Sets how the status line launcher runs, or says whether Claude Code carries it now. */
+async function statuslineCommand($: EngineInterface, arg: string): Promise<string> {
+  if (/^(wrap|only|off)$/i.test(arg)) {
+    const mode = arg.toLowerCase()
+    return (await setting($, 'status_line', mode)) ?? `Status line launcher is now: ${mode}.`
+  }
+  if (arg !== '') return STATUSLINE_USAGE
+  if (await hasLauncher($)) return `The nudgewhen status line launcher is carried by Claude Code's status line.\n${STATUSLINE_USAGE}`
+  const policy = await $.settings.read({ source: 'policy' }).catch(() => ({}) as Record<string, unknown>)
+  const mode = state.options.status_line
+  const on = mode === 'wrap' || mode === 'only'
+  if (policy.statusLine === undefined && on && !carried.seen) {
+    return `status_line is ${mode}, but Claude Code has not read the whole settings yet in this session, so the launcher is not carried yet.\n${STATUSLINE_USAGE}`
+  }
+  if (policy.statusLine === undefined && on && carried.hooksOff) {
+    return `status_line is ${mode}, but hooks are disabled (disableAllHooks, or allowManagedHooksOnly in managed policy), so Claude Code runs no status line command and your own stays.\n${STATUSLINE_USAGE}`
+  }
+  if (policy.statusLine === undefined && on) {
+    return `status_line is ${mode}, but Claude Code skipped nudgewhen's settings hook in this session (its built-in guard; the debug log says settings.read bypassed by cc-plugin-sec-default), so your own status line stays.\n${STATUSLINE_USAGE}`
+  }
+  const why = policy.statusLine !== undefined ? 'managed policy sets statusLine, which nudgewhen never replaces' : 'status_line is off'
+  return `The launcher is not carried: ${why}.\n${STATUSLINE_USAGE}`
 }
 
 const KIND_LIST = KINDS.join(',')
@@ -976,6 +1073,8 @@ async function handle($: EngineInterface, args: string): Promise<string> {
   if (/^forget$/i.test(a)) return forget($)
   const st = /^status(?:\s+(.*))?$/i.exec(a)
   if (st) return statusCommand($, (st[1] ?? '').trim())
+  const sl = /^statusline(?:\s+(.*))?$/i.exec(a)
+  if (sl) return statuslineCommand($, (sl[1] ?? '').trim())
   const tn = /^tone(?:\s+(.*))?$/i.exec(a)
   if (tn) return toneCommand($, (tn[1] ?? '').trim().toLowerCase())
   const tt = /^title(?:\s+(.*))?$/i.exec(a)
@@ -1043,14 +1142,18 @@ export const register: Register = (on, options) => {
   state.cfg = read.cfg
   state.options = { ...options }
   state.warnings = read.warnings
+  registerStatusLine(on, options)
   registerIdle(on, options)
 
   on('session.start', async ($, e, next) => {
     state.sessionId = await $.session.id()
+    state.isEnded = false
+    state.fileBody = undefined
+    state.fileAt = 0
     await $.command.register({
       name: 'nudge',
-      description: 'Set, list or cancel nudges; snooze or pause them; set bedtime, work hours and quiet hours; set the tone, plain or vulgar, and your own lines for it; set the Ghostty tab title (role) and window title (working set); choose status line segments; manage hosted nudges; /nudge report shows your sitting log',
-      argumentHint: 'in 20m <text> | at 17:30 <text> | every 45m <text> | list | cancel <id> | snooze 30m | pause | resume | bedtime|wake HH:MM | hours|quiet HH:MM-HH:MM | days mon,tue | status <list> | tone plain|vulgar | title role|set <text>|clear|on|off | line add <kind> <text>|list|rm <n> | prefs | mute|unmute owner/repo | failures-only on|off | kinds <list> | report',
+      description: 'Set, list or cancel nudges; snooze or pause them; set bedtime, work hours and quiet hours; set the tone, plain or vulgar, and your own lines for it; set the Ghostty tab title (role) and window title (working set); choose status line segments and run the status line launcher; manage hosted nudges; /nudge report shows your sitting log',
+      argumentHint: 'in 20m <text> | at 17:30 <text> | every 45m <text> | list | cancel <id> | snooze 30m | pause | resume | bedtime|wake HH:MM | hours|quiet HH:MM-HH:MM | days mon,tue | status <list> | statusline wrap|only|off | tone plain|vulgar | title role|set <text>|clear|on|off | line add <kind> <text>|list|rm <n> | prefs | mute|unmute owner/repo | failures-only on|off | kinds <list> | report',
       immediate: true,
     })
     await $.tool.register({
@@ -1077,12 +1180,30 @@ export const register: Register = (on, options) => {
   })
 
   on('session.end', async ($, e, next) => {
+    state.isEnded = true
     state.stop?.()
     state.stop = undefined
     state.cloudRun = undefined
     state.statusRun = undefined
     await Promise.allSettled([...state.inflight])
     setHosted(undefined)
+    // The launcher keeps wrap's last good prior output beside the segment file, as <session>.prior.
+    // Wait for a redraw already in flight, so it cannot recreate the file after the rm.
+    await timed($, state.refresh).catch(() => undefined)
+    const path = state.filePath ?? (await segmentPath($))
+    if (path !== null) {
+      const base = path.replace(/\.txt$/, '')
+      if ((await run($, ['rm', '-f', path, `${path}.tmp`, `${base}.prior`])) === null) {
+        $.ui.log(`nudgewhen: could not remove ${path}`, { to: 'debug' })
+      }
+      // The launcher's per-process temp files for this session.
+      const dir = path.slice(0, path.lastIndexOf('/'))
+      const name = path.slice(dir.length + 1).replace(/\.txt$/, '')
+      await run($, ['find', dir, '-maxdepth', '1', '-name', `${name}.prior.*`, '-delete'])
+    }
+    state.filePath = undefined
+    state.fileBody = undefined
+    state.fileAt = 0
     await endIdle($).catch(() => undefined)
     return next(e)
   })

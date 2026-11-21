@@ -80,7 +80,7 @@
     "status_segments": {
       "type": "string",
       "title": "Status line segments",
-      "description": "A comma list in display order. Free: sit, break, next, bed, breaks, context, limits, cost, model, branch. Hosted: hosted, ci, reviews. Unknown names are skipped.",
+      "description": "A comma list in display order. Free: sit, break, next, bed, breaks, context, limits, cost, model, branch. Hosted: hosted, ci, reviews. With the status line launcher on (status_line wrap or only): effort, fast, vim, pr, style, worktree, dir, lines. Unknown names are skipped.",
       "default": "sit,bed,hosted"
     },
     "idle_nudge": {
@@ -88,6 +88,12 @@
       "title": "Nudge sessions when idle?",
       "description": "When a session ends its turn still holding background work or a scheduled wake-up and then sits with no prompt from you, run the idle nudge (`idle-nudge`): it hands off what a script can finish and says whether the session can close. Runs a turn, which uses your usage. See the README for the timing.",
       "default": false
+    },
+    "status_line": {
+      "type": "string",
+      "title": "Status line (off, wrap or only)",
+      "description": "off leaves your status line alone. wrap runs your status line through nudgewhen, which adds its nudges to it. only shows just the nudgewhen status line. A status line set by managed policy is never replaced.",
+      "default": "off"
     }
   }
 }

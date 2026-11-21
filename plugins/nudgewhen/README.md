@@ -51,6 +51,7 @@ Install asks for these; change them later in `/config`. **Nudge sessions when id
 | Ghostty titles (`titles`) | on | `on` sets the Ghostty tab and window titles at session start (only when a role, a set or a stored title exists); `off` leaves them alone |
 | Status line segments (`status_segments`) | `sit,bed,hosted` | what the status line shows, in order |
 | Nudge sessions when idle? (`idle_nudge`) | off | run the idle check when a session sits idle holding background work |
+| Status line (`status_line`) | off | `off`, `wrap` or `only`; see Status line replacement |
 
 An invalid time, range or day list falls back to its default and a toast says so once. Empty means always (work hours, work days) or none (quiet hours). Times are 24-hour and local; ranges may cross midnight.
 
@@ -66,6 +67,7 @@ Each of these has a command that checks the value and saves it:
 | `/nudge days mon,tue,wed,thu,fri` | `work_days` (no argument clears it) |
 | `/nudge quiet 12:00-13:00` | `quiet_hours` (no argument clears it) |
 | `/nudge status model,cost,branch` | `status_segments` (no argument lists the current ones and every name) |
+| `/nudge statusline wrap` | `status_line` (`wrap`, `only` or `off`; no argument says whether it is on) |
 | `/nudge tone vulgar` | `tone` |
 
 ## Tone
@@ -137,13 +139,46 @@ The plugin ships a connection to the hosted server at `https://nudgewhen.dev/mcp
 
 `break` and `sit` only show inside your work hours and work days. Nudges that just fired show first, ahead of the segments.
 
-What a mod cannot read, so only your own `statusLine` command can show it:
+What a mod cannot read, so only a `statusLine` command can show it:
 
-- reasoning effort
 - fast mode
 - the PR badge
 - vim mode
-- output style
+
+With `status_line` on, nudgewhen's own `statusLine` command shows them as the `fast`, `pr` and `vim` segments (see below).
+
+## Status line replacement
+
+`/nudge statusline wrap` or `/nudge statusline only` makes nudgewhen draw a row of Claude Code's own status line. `/nudge statusline off` turns it off, which is the default. `/nudge statusline` with no argument says whether it is on.
+
+- `wrap` runs your own `statusLine` command first, with the same input, and prints its rows above the nudgewhen row. Your command gets 1 second. If it fails or runs over, its last good output shows instead. With no `statusLine` of your own, `wrap` acts like `only`.
+- `only` shows just the nudgewhen row.
+
+The row follows `status_segments`, so add the names below to it, for example `/nudge status sit,bed,effort,pr,dir`. They come from the input Claude Code sends the status line. With `status_line` off they stay blank.
+
+| Segment | Shows |
+| --- | --- |
+| `effort` | `effort <level>`, the reasoning effort |
+| `fast` | `fast`, when fast mode is on |
+| `vim` | `vim <mode>` |
+| `pr` | `PR #12` and its review state, or `MR !12` for a merge request |
+| `style` | the output style, blank for the default |
+| `worktree` | the worktree name |
+| `dir` | the last part of the working directory |
+| `lines` | `+120 -14`, lines added and removed, blank at zero |
+
+These eight need `jq` on your PATH and stay blank without it. The other segments don't need it. The launcher hides its errors and always exits 0.
+
+nudgewhen writes no settings file. It changes the `statusLine` value Claude Code reads while the plugin is loaded. Disable or uninstall the plugin and your own status line is back.
+
+- Your `padding` is kept.
+- The line refreshes at least every 30 seconds. A shorter `refreshInterval` of yours is kept, at least 1 second.
+- The row lives in one file per session under `~/.claude/nudgewhen/status` (or `$CLAUDE_CONFIG_DIR/nudgewhen/status`), removed when the session ends.
+- If the file goes two minutes without an update, the row drops out.
+
+It works in the terminal only. On other surfaces the nudgewhen status entry shows as before.
+
+A `statusLine` set by managed policy is never replaced. Some machines load Claude Code's built-in guard: those with managed settings, a `managed-mcp.json`, or a Team or Enterprise login. There the guard can skip the replacement for a plugin you installed yourself or loaded with `--plugin-dir`. Your own status line then stays, and the debug log says `settings.read bypassed by cc-plugin-sec-default`.
 
 ## How it knows you're sitting
 
@@ -165,7 +200,7 @@ It needs plugin hooks turned on, since it reads Claude Code's own end-of-turn re
 
 ## Development
 
-`claude plugin test plugins/nudgewhen` runs the unit tests. It cannot start processes, so run `sh plugins/nudgewhen/tests/stop-hook.sh` as well to check the Stop hook command in `hooks/hooks.json`.
+`claude plugin test plugins/nudgewhen` runs the unit tests. It cannot start processes, so run `sh plugins/nudgewhen/tests/stop-hook.sh` as well to check the Stop hook command in `hooks/hooks.json`. `sh plugins/nudgewhen/tests/statusline-launcher.sh` tests the status line launcher the same way.
 
 ## License
 
