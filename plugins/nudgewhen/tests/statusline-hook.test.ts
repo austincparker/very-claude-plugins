@@ -156,6 +156,15 @@ test('the hook sets carried false when the policy layer holds statusLine', async
   expect(carried.value).toBe(false)
 })
 
+test('the hook records a whole read and whether hooks are off', async () => {
+  carried.seen = false
+  await hook()({ layers: [cfg('wrap')] }, () => ({ value: { disableAllHooks: true } }))
+  expect(carried.seen).toBe(true)
+  expect(carried.hooksOff).toBe(true)
+  await hook()({ layers: [cfg('wrap')] }, () => ({ value: {} }))
+  expect(carried.hooksOff).toBe(false)
+})
+
 test('a read of one source leaves carried alone', async () => {
   carried.value = true
   await hook()({ source: 'user', layers: [] }, () => ({ value: {} }))

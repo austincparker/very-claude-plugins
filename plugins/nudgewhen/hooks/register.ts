@@ -589,7 +589,10 @@ async function writeSegments($: EngineInterface, now: number, list: string, rows
     if ((await run($, ['mkdir', '-p', path.slice(0, path.lastIndexOf('/'))])) === null) throw new Error('mkdir failed')
     await $.fs.write(tmp, segmentFile(now, list, rows))
     if ((await run($, ['mv', '-f', tmp, path])) === null) throw new Error('mv failed')
+    // session.end may have cleaned up while this write was in flight.
+    if (state.isEnded) await run($, ['rm', '-f', path, tmp])
   } catch (err) {
+    await run($, ['rm', '-f', tmp])
     state.fileBody = prev.body
     state.fileAt = prev.at
     state.filePath = prev.path ?? path
@@ -745,7 +748,14 @@ async function statuslineCommand($: EngineInterface, arg: string): Promise<strin
   if (await hasLauncher($)) return `The nudgewhen status line launcher is carried by Claude Code's status line.\n${STATUSLINE_USAGE}`
   const policy = await $.settings.read({ source: 'policy' }).catch(() => ({}) as Record<string, unknown>)
   const mode = state.options.status_line
-  if (policy.statusLine === undefined && (mode === 'wrap' || mode === 'only')) {
+  const on = mode === 'wrap' || mode === 'only'
+  if (policy.statusLine === undefined && on && !carried.seen) {
+    return `status_line is ${mode}, but Claude Code has not read the whole settings yet in this session, so the launcher is not carried yet.\n${STATUSLINE_USAGE}`
+  }
+  if (policy.statusLine === undefined && on && carried.hooksOff) {
+    return `status_line is ${mode}, but hooks are disabled (disableAllHooks, or allowManagedHooksOnly in managed policy), so Claude Code runs no status line command and your own stays.\n${STATUSLINE_USAGE}`
+  }
+  if (policy.statusLine === undefined && on) {
     return `status_line is ${mode}, but Claude Code skipped nudgewhen's settings hook in this session (its built-in guard; the debug log says settings.read bypassed by cc-plugin-sec-default), so your own status line stays.\n${STATUSLINE_USAGE}`
   }
   const why = policy.statusLine !== undefined ? 'managed policy sets statusLine, which nudgewhen never replaces' : 'status_line is off'

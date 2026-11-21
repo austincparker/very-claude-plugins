@@ -34,7 +34,7 @@ export function readMode(layers: readonly SettingsLayer[]): StatusMode | null {
 }
 
 /** True when Claude Code will not run a non-managed `statusLine`: hooks are all disabled, or only managed hooks run. */
-function hooksOff(layers: readonly SettingsLayer[], prior: Readonly<Obj>): boolean {
+export function hooksOff(layers: readonly SettingsLayer[], prior: Readonly<Obj>): boolean {
   if (prior.disableAllHooks === true || layers.some(l => l.settings.disableAllHooks === true)) return true
   return layers.some(l => l.source === 'policy' && l.settings.allowManagedHooksOnly === true)
 }
@@ -109,20 +109,26 @@ export function answer(layers: readonly SettingsLayer[], prior: Readonly<Obj>, r
  * Whether the latest whole settings read the hook saw was answered with the launcher. The plugin's own reads
  * never reach its hook (re-entry), so this is the only way the plugin learns what the engine's merge holds.
  */
-export const carried = { value: false, seq: 0 }
+export const carried = { value: false, seq: 0, seen: false, hooksOff: false }
 
 export const register: Register = on => {
   on('settings.read', async ($, e, next) => {
     if (e.source !== undefined) return next(e)
     const seq = ++carried.seq
     let out: Obj | null = null
+    let off = false
     try {
       const r = await next(e)
       if ('deny' in r) return r
+      off = hooksOff(e.layers, r.value)
       out = answer(e.layers, r.value, $.plugin.root)
       return out === null ? r : { value: out }
     } finally {
-      if (seq === carried.seq) carried.value = out !== null
+      if (seq === carried.seq) {
+        carried.value = out !== null
+        carried.seen = true
+        carried.hooksOff = off
+      }
     }
   })
 }

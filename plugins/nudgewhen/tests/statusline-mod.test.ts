@@ -103,13 +103,14 @@ test('/nudge statusline under a managed policy names the guard', async ($, on) =
   expect((await nudge($, 'statusline')).text).toMatch(/managed policy/)
 })
 
-test('/nudge statusline under wrap with the launcher not carried names the guard', async ($, on) => {
+test('/nudge statusline before any whole settings read says so, not the guard', async ($, on) => {
   world(on, {}, {}, { CLAUDE_CONFIG_DIR: '/cfg', HOME: '/h' })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: false })
   await nudge($, 'statusline wrap')
   const text = (await nudge($, 'statusline')).text
-  expect(text).toMatch(/cc-plugin-sec-default/)
   expect(text).toMatch(/status_line is wrap/)
+  expect(text).toMatch(/not read the whole settings yet/)
+  expect(text).not.toMatch(/cc-plugin-sec-default/)
 })
 
 test('/nudge statusline with the option off says off', async ($, on) => {
