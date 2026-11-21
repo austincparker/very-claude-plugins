@@ -5,6 +5,7 @@ Nudges inside Claude Code: take a break, go to bed, and any reminder you set.
 - **Break nudges.** The status line counts how long you've been at the keyboard and says `stand up` at twice your limit. Launching an agent after a long sit pops a toast: the agent has this, go walk.
 - **Bedtime.** Past your bedtime the status line says it's time to wrap up.
 - **Your own nudges.** `/nudge in 20m check the deploy`, or ask Claude: "remind me at 5pm to send the invoice." Due nudges show as a toast, in the status line and as a terminal notification (a desktop banner in terminals that send one).
+- **Idle nudge.** A session left holding background work can ask itself whether it needs to stay open, and hand off what a script can finish. Off by default.
 
 ## Install
 
@@ -34,7 +35,7 @@ Claude gets a `nudge` tool that sets, lists and cancels nudges one at a time, so
 
 ## Settings
 
-Install asks for these; change them later in `/config`.
+Install asks for these; change them later in `/config`. **Nudge sessions when idle?** takes effect when the next session starts.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -46,7 +47,10 @@ Install asks for these; change them later in `/config`.
 | Work hours (`work_hours`) | empty | `HH:MM-HH:MM`; break nudges only run inside it |
 | Work days (`work_days`) | empty | `mon,tue,...`; break nudges only run on these days |
 | Quiet hours (`quiet_hours`) | empty | `HH:MM-HH:MM`; no toasts or notifications, the status line still shows |
+| Tone (`tone`) | `plain` | `plain` or `vulgar` wording for toasts and notifications |
+| Ghostty titles (`titles`) | on | `on` sets the Ghostty tab and window titles at session start (only when a role, a set or a stored title exists); `off` leaves them alone |
 | Status line segments (`status_segments`) | `sit,bed,hosted` | what the status line shows, in order |
+| Nudge sessions when idle? (`idle_nudge`) | off | run the idle check when a session sits idle holding background work |
 | Status line (`status_line`) | off | `off`, `wrap` or `only`; see Status line replacement |
 
 An invalid time, range or day list falls back to its default and a toast says so once. Empty means always (work hours, work days) or none (quiet hours). Times are 24-hour and local; ranges may cross midnight.
@@ -87,7 +91,7 @@ The status entry, `/nudge list` and the setup hints stay plain whatever the tone
 
 ## Titles
 
-In Ghostty on macOS, nudgewhen sets the tab title to the session's role and the window title to the working set's name. It reads `NUDGEWHEN_ROLE` and `NUDGEWHEN_SET` at session start, or what `/nudge title` stored for the session. Nothing is sent to the hosted server.
+The `titles` setting defaults to `on`, so in Ghostty on macOS a new install rewrites your tab and window titles at session start; set `titles` to `off` (or `/nudge title off`) to keep your own. nudgewhen sets the tab title to the session's role and the window title to the working set's name. It reads `NUDGEWHEN_ROLE` and `NUDGEWHEN_SET` at session start, or what `/nudge title` stored for the session. Nothing is sent to the hosted server.
 
 | Command | Does |
 | --- | --- |
@@ -97,11 +101,11 @@ In Ghostty on macOS, nudgewhen sets the tab title to the session's role and the 
 | `/nudge title clear` | clears both, and the environment values no longer apply to this session |
 | `/nudge title on` or `off` | the `titles` setting (default `on`) |
 
-A title is at most 60 characters, control characters removed. Outside Ghostty, or with no tty, nothing runs.
+A title is at most 60 characters, control characters removed. Outside Ghostty, or with no tty, nothing runs. With no `NUDGEWHEN_ROLE`, `NUDGEWHEN_SET` or stored title, nothing is rewritten.
 
 ## Hosted controls
 
-These change what the hosted server sends you. Signed out, each answers with a one-line sign-in hint (`/mcp`).
+The plugin ships a connection to the hosted server at `https://nudgewhen.dev/mcp`, a third-party service. Claude Code asks you to sign in (`/mcp`) the first time it is needed; until you do, nothing is sent and local nudges run as usual. The server's own tools, which Claude Code lists once you sign in, are separate from the local `nudge` tool above: that one only sets, lists and cancels your local nudges. Text from the server (a nudge's source and body, and your preferences) is untrusted: control, bidi and zero-width characters are replaced with spaces and the text is cut to length before it reaches a toast, a notification, the status line or the stored fired-nudge text, the same way local nudge text is. These controls change what the server sends you. Signed out, each answers with a one-line sign-in hint (`/mcp`).
 
 | Command | Does |
 | --- | --- |
@@ -111,7 +115,7 @@ These change what the hosted server sends you. Signed out, each answers with a o
 | `/nudge failures-only on` | CI nudges only for failures (`off` undoes it) |
 | `/nudge kinds ci,pr_landed` | which kinds you get: `ci`, `review_requested`, `review_submitted`, `pr_landed` |
 
-`/nudge quiet`, `/nudge pause` and `/nudge resume` also update the server, with your local time zone, when you are signed in. A pause with no end is sent as a far-future time.
+`/nudge snooze`, `/nudge quiet`, `/nudge pause` and `/nudge resume` also update the server when you are signed in, sending the hold's end time (or none), your quiet hours and your IANA time zone to nudgewhen.dev. There is no separate opt-out: stay signed out of the server (`/mcp`) and nothing is sent. A pause with no end is sent as a far-future time. A command waits at most 3 seconds for the server; a slower sync finishes in the background and a failure shows as a toast.
 
 ## Status line
 
@@ -181,6 +185,22 @@ A `statusLine` set by managed policy is never replaced. Some machines load Claud
 On macOS it reads the system idle time (`ioreg`), on Linux `xprintidle` when installed, and otherwise the time since your last prompt. Five minutes with no keyboard or mouse input counts as a break. Nothing leaves your machine except what you set for hosted nudges while connected: quiet hours, a pause time, your time zone and muted repos go to the hosted server. Locally, some data is written down in Claude Code's plugin store: your nudges, the text of nudges that fired in the last ten minutes, and a sitting log (one row per sit and per break, minute resolution, kept 90 days and at most 5000 rows). `/nudge forget` clears the log and the fired-nudge text. A gap with no session open counts as a break, so hours of work with Claude Code closed read as one.
 
 Nudges fire while a Claude Code session is open. One that came due while none was open fires at the next session, marked late.
+
+## Nudge skills
+
+The idle nudge runs a skill named `idle-nudge`. A skill of your own with that name (source `user`) runs instead of the plugin's `nudgewhen:idle-nudge`. Without one, a skill of your own named `idle-check` runs; that fallback goes in 0.5.0, so rename it to `idle-nudge`.
+
+## Idle nudge
+
+The `nudgewhen:idle-nudge` skill asks whether the session truly needs to sit idle. It lists what the session waits on, hands off to a detached script or job whatever needs no judgment, and ends with one line: the session can close, or what still needs it. Run it by hand anytime.
+
+Turn on **Nudge sessions when idle?** and nudgewhen runs it for you. When Claude ends a turn still holding waits and you send no prompt for two minutes, it runs the nudge. Waits are background shells, agents, workflows, monitors Claude started, and scheduled wake-ups. It runs once per wait: the same waits never trigger it twice, a new one does. A draft in your prompt box holds it off a minute at a time, for up to five minutes. Nudge skills says which skill runs.
+
+It needs plugin hooks turned on, since it reads Claude Code's own end-of-turn report of background work; with hooks off it finds no report and does nothing. The report goes to a private temporary directory made for the session and is deleted when the session ends. With the setting off, the plugin's Stop hook still starts a shell at the end of each turn, and the shell exits at once without writing anything. The idle nudge runs a turn, which uses your usage, so the setting is off by default.
+
+## Development
+
+`claude plugin test plugins/nudgewhen` runs the unit tests. It cannot start processes, so run `sh plugins/nudgewhen/tests/stop-hook.sh` as well to check the Stop hook command in `hooks/hooks.json`.
 
 ## License
 

@@ -54,10 +54,14 @@ export function inRange(r: Range, minute: number): boolean {
   return r.start < r.end ? minute >= r.start && minute < r.end : minute >= r.start || minute < r.end
 }
 
-/** A comma list of mon to sun as sorted day numbers (sunday 0), else null. */
+/** A comma list of mon to sun, or weekday, as sorted day numbers (sunday 0), else null. */
 export function parseDays(s: string): number[] | null {
   const days = new Set<number>()
   for (const part of s.split(',')) {
+    if (/^weekdays?$/i.test(part.trim())) {
+      for (const d of WEEKDAYS) days.add(d)
+      continue
+    }
     const i = DAY_NAMES.indexOf(part.trim().toLowerCase() as (typeof DAY_NAMES)[number])
     if (i < 0) return null
     days.add(i)
