@@ -91,7 +91,7 @@ export function answer(layers: readonly SettingsLayer[], prior: Readonly<Obj>, r
   const padding = typeof old.padding === 'number' && Number.isFinite(old.padding) ? old.padding : 0
   const interval =
     typeof old.refreshInterval === 'number' && Number.isFinite(old.refreshInterval) && old.refreshInterval > 0
-      ? Math.min(old.refreshInterval, INTERVAL_MAX)
+      ? Math.min(INTERVAL_MAX, Math.max(1, old.refreshInterval))
       : INTERVAL_MAX
   return {
     ...prior,
@@ -115,10 +115,14 @@ export const register: Register = on => {
   on('settings.read', async ($, e, next) => {
     if (e.source !== undefined) return next(e)
     const seq = ++carried.seq
-    const r = await next(e)
-    if ('deny' in r) return r
-    const out = answer(e.layers, r.value, $.plugin.root)
-    if (seq === carried.seq) carried.value = out !== null
-    return out === null ? r : { value: out }
+    let out: Obj | null = null
+    try {
+      const r = await next(e)
+      if ('deny' in r) return r
+      out = answer(e.layers, r.value, $.plugin.root)
+      return out === null ? r : { value: out }
+    } finally {
+      if (seq === carried.seq) carried.value = out !== null
+    }
   })
 }

@@ -100,6 +100,13 @@ expect 'failing prior shows the cache' "good${ESC}[0m
 x" "$out"
 expect 'failing prior leaves the cache unchanged' good "$(cat "$state/s1.prior")"
 
+# --- an empty successful prior replaces the cache ---
+reset
+seg s1 "$(now_ms)" 'sit' "sit${TAB}x"
+printf 'good\n' >"$state/s1.prior"
+run wrap "$(b64 'true')"
+expect 'an empty prior output replaces the cache' x "$out"
+
 # --- only never runs the prior ---
 reset
 seg s1 "$(now_ms)" 'sit' "sit${TAB}x"
@@ -126,9 +133,21 @@ if command -v jq >/dev/null; then
   json='{"session_id":"s1","pr":{"number":9,"kind":"mr"},"output_style":{"name":"default"},"cost":{"total_lines_added":0,"total_lines_removed":0},"cwd":"/q/r"}'
   run only -
   expect 'mr, default style, zero lines and cwd fallback' "MR !9${SEP}r${SEP}x" "$out"
+  seg s1 "$(now_ms)" 'dir' "dir${TAB}z"
+  for pair in '/w/proj/ proj' '/w/proj// proj' '/ /'; do
+    json="{\"session_id\":\"s1\",\"cwd\":\"${pair% *}\"}"
+    run only -
+    expect "dir of ${pair% *}" "${pair#* }" "$out"
+  done
 else
   pass 'jq not installed: stdin segment cases skipped'
 fi
+
+# --- a file segment name matches case-insensitively and may not shadow a stdin one ---
+reset
+seg s1 "$(now_ms)" 'Model,sit' "Model${TAB}opus" "sit${TAB}x"
+run only -
+expect 'a mixed-case file segment name is found' "opus${SEP}x" "$out"
 
 # --- no jq on PATH: stdin segments dropped, file segments kept ---
 json='{"session_id":"s1","cwd":"/a/b","effort":{"level":"high"},"fast_mode":true}'

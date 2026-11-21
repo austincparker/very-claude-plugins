@@ -77,7 +77,7 @@ NUDGEWHEN_INPUT
     prior_pid=
     reap "$dog_pid"
     dog_pid=
-    if [ "$rc" -eq 0 ] && [ -s "$out" ]; then
+    if [ "$rc" -eq 0 ]; then
       if [ -n "$cache" ]; then
         mv -f "$out" "$cache.prior" || rm -f "$out"
       else
@@ -134,7 +134,7 @@ if command -v jq >/dev/null; then
         + (if (.pr.review_state | type) == "string" and .pr.review_state != "" then " " + .pr.review_state else "" end)),
     row("style"; .output_style.name | select(type == "string" and . != "default")),
     row("worktree"; (.worktree.name // .workspace.git_worktree) | select(type == "string")),
-    row("dir"; (.workspace.current_dir // .cwd) | select(type == "string") | split("/") | last),
+    row("dir"; (.workspace.current_dir // .cwd) | select(type == "string" and . != "") | sub("/+$"; "") | if . == "" then "/" else split("/") | last end),
     row("lines"; (.cost.total_lines_added // 0) as $a | (.cost.total_lines_removed // 0) as $r
       | select(($a | type) == "number" and ($r | type) == "number" and ($a != 0 or $r != 0))
       | "+\($a) -\($r)")
@@ -155,7 +155,8 @@ row=$(NUDGEWHEN_JQ=$jqout awk '
   NR == 2 { list = $0 }
   NR >= 3 {
     p = index($0, "\t")
-    if (p > 1 && !(substr($0, 1, p - 1) in std)) fv[substr($0, 1, p - 1)] = substr($0, p + 1)
+    nm = tolower(substr($0, 1, p - 1))
+    if (p > 1 && !(nm in std)) fv[nm] = substr($0, p + 1)
   }
   END {
     m = split(list, items, ",")

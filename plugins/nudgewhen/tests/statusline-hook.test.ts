@@ -108,6 +108,12 @@ test('a root with a quote is escaped for the shell', () => {
   expect(cmd.startsWith(`'/a'\\''b'/bin/statusline wrap `)).toBe(true)
 })
 
+test('an interval below 1 is raised to 1 second', () => {
+  for (const [v, want] of [[0.5, 1], [0.001, 1], [2.5, 2.5]] as const) {
+    expect(statusLine(answer([cfg('wrap')], { statusLine: { refreshInterval: v } }, ROOT)).refreshInterval).toBe(want)
+  }
+})
+
 test('the same layers give the same answer', () => {
   const layers = [cfg('wrap')]
   const prior = { statusLine: { command: 'old', refreshInterval: 60 } }
@@ -157,6 +163,20 @@ test('a read of one source leaves carried alone', async () => {
   carried.value = false
   await hook()({ source: 'user', layers: [cfg('wrap')] }, () => ({ value: {} }))
   expect(carried.value).toBe(false)
+})
+
+test('a denied or failed whole read sets carried false', async () => {
+  const rows: (() => unknown)[] = [
+    () => ({ deny: 'no' }),
+    () => {
+      throw new Error('x')
+    },
+  ]
+  for (const next of rows) {
+    carried.value = true
+    await hook()({ layers: [cfg('wrap')] }, next).catch(() => undefined)
+    expect(carried.value).toBe(false)
+  }
 })
 
 test('the segment file is the header, the list, then one tab row per segment with text', () => {

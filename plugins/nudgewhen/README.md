@@ -172,7 +172,7 @@ These eight need `jq` on your PATH and stay blank without it. The other segments
 nudgewhen writes no settings file. It changes the `statusLine` value Claude Code reads while the plugin is loaded. Disable or uninstall the plugin and your own status line is back.
 
 - Your `padding` is kept.
-- The line refreshes at least every 30 seconds. A shorter `refreshInterval` of yours is kept.
+- The line refreshes at least every 30 seconds. A shorter `refreshInterval` of yours is kept, at least 1 second.
 - The row lives in one file per session under `~/.claude/nudgewhen/status` (or `$CLAUDE_CONFIG_DIR/nudgewhen/status`), removed when the session ends.
 - If the file goes two minutes without an update, the row drops out.
 
