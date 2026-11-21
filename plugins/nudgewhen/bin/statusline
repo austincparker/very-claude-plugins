@@ -2,7 +2,7 @@
 # nudgewhen status line launcher.
 # Usage: statusline <mode> <state dir> <base64 of prior command | ->
 # Reads Claude Code's status JSON on stdin once. In `wrap` mode it runs the prior status line command
-# (stopped after 1 second, killed after 2) and prints its rows first, then one row of nudgewhen segments from
+# (stopped after 1 second, killed after 2, in the user's shell) and prints its rows first, then one row of nudgewhen segments from
 # <state dir>/<session id>.txt. Any other mode behaves like `only`. Always exits 0.
 
 exec 2>/dev/null
@@ -15,15 +15,18 @@ dog_pid=
 
 out=
 # Every descendant of pid $1, deepest first.
+# The recursion runs in a command substitution so each level keeps its own c.
 descend() {
   for c in $(pgrep -P "$1"); do
-    descend "$c"
+    sub=$(descend "$c")
+    [ -z "$sub" ] || printf '%s\n' "$sub"
     printf '%s\n' "$c"
   done
 }
-# reap <pid> [signal]: signal the process and all its descendants.
+# reap <pid> [signal]: signal the process's group (each background job leads its own) and all its descendants.
 reap() {
   kids=$(descend "$1")
+  kill -"${2:-TERM}" -- "-$1" 2>/dev/null
   kill -"${2:-TERM}" "$1" $kids
 }
 # Stop the prior command and its children, and the watchdog; leave no temp file behind.
@@ -60,7 +63,14 @@ if [ "$mode" = wrap ] && [ -n "$b64" ] && [ "$b64" != - ]; then
     fi
     # Temp files a killed launcher left behind, and a prior cache its session no longer owns.
     [ -z "$dir" ] || find "$dir" -maxdepth 1 \( -name '*.prior' -o -name '*.prior.*' \) -mmin +10 -exec rm -f {} +
-    /bin/sh -c "$cmd" >"$out" <<NUDGEWHEN_INPUT &
+    # The prior runs under the user's own sh-compatible shell, so bash or zsh syntax works; else bash if present, else sh.
+    case ${SHELL##*/} in
+      bash | zsh | sh | dash | ksh) shell=$SHELL ;;
+      *) shell=$(command -v bash) || shell=/bin/sh ;;
+    esac
+    [ -x "$shell" ] || shell=/bin/sh
+    set -m
+    "$shell" -c "$cmd" >"$out" <<NUDGEWHEN_INPUT &
 $input
 NUDGEWHEN_INPUT
     prior_pid=$!
@@ -74,10 +84,13 @@ NUDGEWHEN_INPUT
     dog_pid=$!
     wait "$prior_pid"
     rc=$?
+    # Anything the prior left in its group (children that ignored the TERM) dies now, so none keeps $out open.
+    kill -KILL -- "-$prior_pid" 2>/dev/null
     prior_pid=
     reap "$dog_pid"
     dog_pid=
-    if [ "$rc" -eq 0 ]; then
+    # A prior killed by a signal (rc 128 and up) has partial rows; a non-zero exit keeps the rows it printed.
+    if [ "$rc" -eq 0 ] || { [ "$rc" -lt 128 ] && [ -s "$out" ]; }; then
       if [ -n "$cache" ]; then
         mv -f "$out" "$cache.prior" || rm -f "$out"
       else

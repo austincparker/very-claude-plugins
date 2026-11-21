@@ -91,14 +91,20 @@ x" "$out"
 expect 'sleeping prior leaves the cache unchanged' good "$(cat "$state/s1.prior")"
 expect 'sleeping prior leaves no temp file' 2 "$(find "$state" -type f | wc -l | tr -d ' ')"
 
-# --- prior exiting 1 shows the cache ---
+# --- a prior exiting non-zero keeps the rows it printed; one that printed nothing keeps the cache ---
 reset
 seg s1 "$(now_ms)" 'sit' "sit${TAB}x"
 printf 'good\n' >"$state/s1.prior"
 run wrap "$(b64 'echo bad; exit 1')"
-expect 'failing prior shows the cache' "good${ESC}[0m
+expect 'failing prior with rows shows them' "bad${ESC}[0m
 x" "$out"
-expect 'failing prior leaves the cache unchanged' good "$(cat "$state/s1.prior")"
+reset
+seg s1 "$(now_ms)" 'sit' "sit${TAB}x"
+printf 'good\n' >"$state/s1.prior"
+run wrap "$(b64 'exit 1')"
+expect 'failing silent prior shows the cache' "good${ESC}[0m
+x" "$out"
+expect 'failing silent prior leaves the cache unchanged' good "$(cat "$state/s1.prior")"
 
 # --- an empty successful prior replaces the cache ---
 reset
@@ -291,6 +297,14 @@ for args in '' 'wrap' 'wrap /nonexistent/x !!!notbase64' 'wrap . -'; do
   printf 'not json' | "$L" $args >/dev/null
   expect "exits 0 for args '$args' with garbage stdin" 0 "$?"
 done
+
+# --- a TERM-ignoring grandchild under a middle process dies with the launcher's kill ---
+reset
+seg s1 "$(now_ms)" 'sit' "sit${TAB}x"
+mark=nudgewhen-tree-$$
+run wrap "$(b64 "bash -c \"trap '' TERM; exec -a $mark sleep 30\" & wait")"
+sleep 0.3
+check 'no process of the killed prior tree survives' [ -z "$(pgrep -f "$mark")" ]
 
 printf '# %s tests, %s failed\n' "$n" "$fails"
 [ "$fails" -eq 0 ]
