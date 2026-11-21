@@ -19,13 +19,13 @@ for d in "$skill_dir"/*/; do
   grep -q -F "$plugin:$skill" "$here/idle.test.ts" || { echo "FAIL: idle.test.ts has no command $plugin:$skill" >&2; exit 1; }
 done
 [ "$found" -gt 0 ] || { echo "FAIL: no skill in $skill_dir" >&2; exit 1; }
-# The version in plugin.json is the top CHANGELOG entry. From 0.4.0 the idle-check fallback must be gone: no mention of it in the hook.
+# The version in plugin.json is the top CHANGELOG entry. From 0.5.0 the idle-check fallback must be gone: no mention of it in the hook.
 version=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$here/../.claude-plugin/plugin.json")
 top=$(sed -n 's/^## \[\(.*\)\].*/\1/p' "$here/../CHANGELOG.md" | head -1)
 [ "$top" = "$version" ] || { echo "FAIL: plugin.json $version, CHANGELOG top $top" >&2; exit 1; }
 minor=$(printf '%s' "$version" | cut -d. -f2)
 major=$(printf '%s' "$version" | cut -d. -f1)
-if [ "$major" -gt 0 ] || [ "$minor" -ge 4 ]; then
+if [ "$major" -gt 0 ] || [ "$minor" -ge 5 ]; then
   ! grep -q "idle-check" "$here/../hooks/idle.ts" || { echo "FAIL: hooks/idle.ts still names idle-check; remove the fallback" >&2; exit 1; }
 fi
 # The manifest and skill frontmatter parse, and nothing warns.

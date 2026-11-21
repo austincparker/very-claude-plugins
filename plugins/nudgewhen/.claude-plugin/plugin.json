@@ -1,9 +1,17 @@
 {
   "name": "nudgewhen",
-  "version": "0.3.0",
-  "description": "Nudges in Claude Code: take a break, go to bed, and any reminder you set with /nudge or by asking Claude.",
-  "author": { "name": "Austin Parker" },
+  "version": "0.4.0",
+  "description": "Nudges in Claude Code: take a break, go to bed, and any reminder you set with /nudge or by asking Claude. Optional hosted CI and review nudges come from the third-party nudgewhen.dev server, and only after you sign in to it.",
+  "author": {
+    "name": "Austin Parker"
+  },
   "license": "MIT",
+  "mcpServers": {
+    "nudgewhen": {
+      "type": "http",
+      "url": "https://nudgewhen.dev/mcp"
+    }
+  },
   "userConfig": {
     "sit_minutes": {
       "type": "number",
@@ -27,27 +35,65 @@
       "description": "Show a wrap-up nudge in the status line between bedtime and wake-up.",
       "default": true
     },
-    "bedtime_hour": {
-      "type": "number",
-      "title": "Bedtime (hour, 0-23)",
-      "description": "Local hour the bedtime nudge starts.",
-      "default": 23,
-      "min": 0,
-      "max": 23
+    "bedtime": {
+      "type": "string",
+      "title": "Bedtime (HH:MM)",
+      "description": "Local time the bedtime nudge starts, as HH:MM in 24-hour time.",
+      "default": "23:00"
     },
-    "wake_hour": {
-      "type": "number",
-      "title": "Wake-up (hour, 0-23)",
-      "description": "Local hour the bedtime nudge ends.",
-      "default": 5,
-      "min": 0,
-      "max": 23
+    "wake": {
+      "type": "string",
+      "title": "Wake-up (HH:MM)",
+      "description": "Local time the bedtime nudge ends, as HH:MM in 24-hour time.",
+      "default": "05:00"
+    },
+    "work_hours": {
+      "type": "string",
+      "title": "Work hours (HH:MM-HH:MM)",
+      "description": "Break nudges only run inside these hours. Empty means always.",
+      "default": ""
+    },
+    "work_days": {
+      "type": "string",
+      "title": "Work days",
+      "description": "Break nudges only run on these days, a comma list of mon, tue, wed, thu, fri, sat, sun, or weekday. Empty means every day.",
+      "default": ""
+    },
+    "quiet_hours": {
+      "type": "string",
+      "title": "Quiet hours (HH:MM-HH:MM)",
+      "description": "No toasts or notifications in these hours; the status line still shows. A reminder that came due fires when they end. Empty means none.",
+      "default": ""
+    },
+    "tone": {
+      "type": "string",
+      "title": "Tone (plain or vulgar)",
+      "description": "plain keeps the usual wording. vulgar has toasts and notifications say a random crude line, yours from /nudge line add or the built-in starters. The status line stays plain.",
+      "default": "plain"
+    },
+    "titles": {
+      "type": "string",
+      "title": "Ghostty titles (on or off)",
+      "description": "on sets the Ghostty tab title to NUDGEWHEN_ROLE and the window title to NUDGEWHEN_SET at session start, or to what /nudge title stored. off leaves the titles alone.",
+      "default": "on"
+    },
+    "status_segments": {
+      "type": "string",
+      "title": "Status line segments",
+      "description": "A comma list in display order. Free: sit, break, next, bed, breaks, context, limits, cost, model, branch. Hosted: hosted, ci, reviews. With the status line launcher on (status_line wrap or only): effort, fast, vim, pr, style, worktree, dir, lines. Unknown names are skipped.",
+      "default": "sit,bed,hosted"
     },
     "idle_nudge": {
       "type": "boolean",
       "title": "Nudge sessions when idle?",
       "description": "When a session ends its turn still holding background work or a scheduled wake-up and then sits with no prompt from you, run the idle nudge (`idle-nudge`): it hands off what a script can finish and says whether the session can close. Runs a turn, which uses your usage. See the README for the timing.",
       "default": false
+    },
+    "status_line": {
+      "type": "string",
+      "title": "Status line (off, wrap or only)",
+      "description": "off leaves your status line alone. wrap runs your status line through nudgewhen, which adds its nudges to it. only shows just the nudgewhen status line. A status line set by managed policy is never replaced.",
+      "default": "off"
     }
   }
 }
