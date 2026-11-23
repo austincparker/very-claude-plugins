@@ -306,5 +306,20 @@ run wrap "$(b64 "bash -c \"trap '' TERM; exec -a $mark sleep 30\" & wait")"
 sleep 0.3
 check 'no process of the killed prior tree survives' [ -z "$(pgrep -f "$mark")" ]
 
+# --- the state dir and its files are private; files a dead session left are swept in every mode ---
+reset
+chmod 755 "$state"
+seg s1 "$(now_ms)" 'sit' "sit${TAB}x"
+seg gone "$(now_ms)" 'sit' "sit${TAB}x"
+touch -t 200001010000 "$state/gone.txt" "$state/gone.prior"
+run wrap "$(b64 'echo p')"
+expect 'state dir is mode 700' drwx------ "$(ls -ld "$state" | cut -c1-10)"
+expect 'prior cache is mode 600' -rw------- "$(ls -l "$state/s1.prior" | cut -c1-10)"
+check 'a day-old segment file is swept' [ ! -e "$state/gone.txt" ]
+check 'a day-old prior cache is swept' [ ! -e "$state/gone.prior" ]
+touch -t 200001010000 "$state/s1.txt"
+run only -
+check 'the sweep runs under only' [ ! -e "$state/s1.txt" ]
+
 printf '# %s tests, %s failed\n' "$n" "$fails"
 [ "$fails" -eq 0 ]

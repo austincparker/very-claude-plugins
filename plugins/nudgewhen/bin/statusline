@@ -6,6 +6,8 @@
 # <state dir>/<session id>.txt. Any other mode behaves like `only`. Always exits 0.
 
 exec 2>/dev/null
+# The cached prior output and segment rows (branch, cwd, cost) are for this user only.
+umask 077
 
 mode=$1
 dir=$2
@@ -33,7 +35,7 @@ reap() {
 stop() {
   [ -z "$prior_pid" ] || reap "$prior_pid"
   [ -z "$dog_pid" ] || reap "$dog_pid"
-  [ -z "$out" ] || rm -f "$out"
+  [ -z "$out" ] || rm -f "$out" "$out.kids"
 }
 trap 'stop; exit 0' TERM INT HUP PIPE
 
@@ -48,7 +50,10 @@ sid=$(printf '%s' "$input" | tr ',{}' '\n\n\n' |
 cache=
 if [ -n "$sid" ] && [ -n "$dir" ]; then
   if mkdir -p "$dir"; then
+    chmod 700 "$dir"
     cache=$dir/$sid
+    # Files a crashed or killed session left behind: segment rows and prior caches idle for a day.
+    find "$dir" -maxdepth 1 -type f \( -name '*.txt' -o -name '*.prior' \) -mmin +1440 -exec rm -f {} +
   fi
 fi
 
@@ -77,6 +82,8 @@ NUDGEWHEN_INPUT
     (
       p=$prior_pid
       sleep 1
+      # Without job control (dash and no tty) the group kill does nothing: the descendants are noted before the TERM, and the launcher KILLs them by pid.
+      [ -z "$out" ] || descend "$p" >"$out.kids"
       reap "$p"
       sleep 1
       kill -0 "$p" && reap "$p" KILL
@@ -86,6 +93,11 @@ NUDGEWHEN_INPUT
     rc=$?
     # Anything the prior left in its group (children that ignored the TERM) dies now, so none keeps $out open.
     kill -KILL -- "-$prior_pid" 2>/dev/null
+    if [ -n "$out" ] && [ -s "$out.kids" ]; then
+      # shellcheck disable=SC2046
+      kill -KILL $(cat "$out.kids") 2>/dev/null
+    fi
+    [ -z "$out" ] || rm -f "$out.kids"
     prior_pid=
     reap "$dog_pid"
     dog_pid=
