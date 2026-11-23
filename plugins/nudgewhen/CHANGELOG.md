@@ -12,13 +12,16 @@
 
 - `bedtime_hour` and `wake_hour` are replaced by `bedtime` and `wake` (`HH:MM`). A saved `bedtime_hour` or `wake_hour` still counts as the whole hour while `bedtime` or `wake` is at its default, for this release; set `bedtime` and `wake` in `/config` or with `/nudge bedtime 22:30` and `/nudge wake 06:00`.
 - Ghostty titles default to on: a session start now sets the tab and window titles. Set `titles` to `off` to keep your own.
-- The plugin now declares the hosted MCP server `https://nudgewhen.dev/mcp`, a third-party service that asks you to sign in. Snooze, pause, resume and quiet hours send their hold, quiet hours and time zone to it once you are signed in; stay signed out and nothing is sent.
+- The plugin now declares the hosted MCP server `https://nudgewhen.dev/mcp`, a third-party service that asks you to sign in. Snooze, pause, resume and quiet hours send their hold, quiet hours and time zone to it once you are signed in; stay signed out and nudgewhen sends it nothing, though Claude Code itself still contacts the server at session start, without credentials, so it can see your IP address and Claude Code's version.
 - Local `/nudge` commands wait at most 3 seconds for the hosted server.
 
 ### Fixed
 
 - A hosted nudge whose toast was cut short by a restart or session end is shown on the next poll instead of acked unseen.
 - `/nudge mute` and `/nudge unmute` keep every muted repo the server holds, however long the list.
+- A recurring nudge cut off before its toast shows on the next tick instead of skipping that occurrence.
+- `/nudge title set` or `role` after `/nudge title clear` no longer brings the other title back from `NUDGEWHEN_ROLE` or `NUDGEWHEN_SET`.
+- Status line files are private to you, and files a dead session left are swept after a day.
 - The `idle-check` fallback named in 0.3.0 stays in this release; it is removed in 0.5.0.
 
 ## [0.3.0]

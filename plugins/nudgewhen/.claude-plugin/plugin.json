@@ -5,6 +5,8 @@
   "author": {
     "name": "Austin Parker"
   },
+  "homepage": "https://nudgewhen.dev",
+  "repository": "https://github.com/austincparker/very-claude-plugins",
   "license": "MIT",
   "mcpServers": {
     "nudgewhen": {

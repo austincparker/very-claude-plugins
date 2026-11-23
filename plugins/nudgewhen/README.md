@@ -28,7 +28,7 @@ Nudges inside Claude Code: take a break, go to bed, and any reminder you set.
 | `/nudge report` | breaks and sits, per day |
 | `/nudge forget` | clear the sitting log and fired-nudge text |
 | `/nudge snooze 30m` | hold every toast and notification for 30 minutes (`2h`, `1h30m` work too) |
-| `/nudge pause` / `pause until 14:30` / `pause tomorrow` | hold until `/nudge resume`, until that time, or until your next wake-up time |
+| `/nudge pause` / `pause until 14:30` / `pause tomorrow` | hold until `/nudge resume`, until that time, or until your wake-up time tomorrow |
 | `/nudge resume` | end a snooze or pause |
 
 Claude gets a `nudge` tool that sets, lists and cancels nudges one at a time, so plain requests work. Cancelling all of them takes your own `/nudge cancel all`. Nudge text is cut to 200 characters with control characters removed, and you can keep up to 100 nudges.

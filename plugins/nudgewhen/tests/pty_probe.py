@@ -20,6 +20,7 @@ import re
 import select
 import shutil
 import signal
+import stat
 import struct
 import subprocess
 import sys
@@ -391,22 +392,53 @@ def user_settings():
     return os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "settings.json")
 
 
-def forget_project(path):
-    """Drops the trust and import consent the CLI saved for a scratch directory from the user's .claude.json."""
+def claude_json():
     cfg = os.environ.get("CLAUDE_CONFIG_DIR")
-    f = os.path.join(cfg, ".claude.json") if cfg else os.path.expanduser("~/.claude.json")
+    return os.path.join(cfg, ".claude.json") if cfg else os.path.expanduser("~/.claude.json")
+
+
+def known_project(path):
+    """Whether the user's .claude.json already holds saved state (trust, import consent) for `path`."""
     try:
+        with open(claude_json()) as fh:
+            d = json.load(fh)
+        return isinstance(d.get("projects"), dict) and path in d["projects"]
+    except (OSError, ValueError):
+        return False
+
+
+def forget_project(path):
+    """Drops the trust and import consent the CLI saved for `path` from the user's .claude.json.
+
+    The file may be written by a live session, so the copy is taken and replaced only if the file did not change
+    in between; the copy keeps the original's mode (the file holds account data) and has a unique name.
+    """
+    f = claude_json()
+    tmp = None
+    try:
+        before = os.stat(f)
         with open(f) as fh:
             d = json.load(fh)
         if not isinstance(d.get("projects"), dict) or path not in d["projects"]:
             return
         del d["projects"][path]
-        tmp = f + ".nudgewhen-probe.tmp"
-        with open(tmp, "w") as fh:
+        fd, tmp = tempfile.mkstemp(prefix=".claude.json.nudgewhen-", dir=os.path.dirname(f))  # created 0600
+        with os.fdopen(fd, "w") as fh:
             json.dump(d, fh, indent=2)
+        os.chmod(tmp, stat.S_IMODE(before.st_mode))
+        after = os.stat(f)
+        if (after.st_mtime_ns, after.st_size, after.st_ino) != (before.st_mtime_ns, before.st_size, before.st_ino):
+            return  # a live session wrote it meanwhile; leave its file alone
         os.replace(tmp, f)
+        tmp = None
     except (OSError, ValueError):
         pass
+    finally:
+        if tmp is not None:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 def stdin_keys(path):
@@ -739,6 +771,8 @@ def main():
     print("probe files: " + WORK, file=sys.stderr)
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(s, on_signal)
+    # The dialogs are answered Yes for the checkout under test; that consent is undone unless the user had given it before.
+    root_known = known_project(os.path.realpath(ROOT))
     try:
         return route() if mode == "route" else smoke()
     except Exception as e:  # reason goes to the mode's md
@@ -746,6 +780,9 @@ def main():
         with open(os.path.join(WORK, "probe.md" if mode == "route" else "smoke.md"), "w") as f:
             f.write("failure: %r\n%s: fail\n" % (e, "route-a" if mode == "route" else "smoke"))
         return 1
+    finally:
+        if not root_known:
+            forget_project(os.path.realpath(ROOT))
 
 
 if __name__ == "__main__":
