@@ -265,7 +265,7 @@ async function takeDue($: EngineInterface, now: number): Promise<Nudge[]> {
   return due
 }
 
-/** A number in [0, 1) for a one-in-N chance; NUDGEWHEN_DICE fixes it for tests. */
+/** A number in [0, 1) for a one-in-N chance. Tests set NUDGEWHEN_DICE to fix it; any other value uses Math.random. */
 async function draw($: EngineInterface): Promise<number> {
   const fixed = Number(await Promise.resolve($.env.get('NUDGEWHEN_DICE')).catch(() => undefined))
   return Number.isFinite(fixed) && fixed >= 0 && fixed < 1 ? fixed : Math.random()
