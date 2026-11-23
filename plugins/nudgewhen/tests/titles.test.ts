@@ -187,6 +187,19 @@ test('after clear the env titles do not come back', async ($, on) => {
   expect(osa(seen)).toEqual([])
 })
 
+test('after clear, setting one title leaves the other empty despite the env', async ($, on) => {
+  const seen = world(on, { env: ROLE_ENV })
+  await start($)
+  await nudge($, 'title clear')
+  seen.argv.length = 0
+  await nudge($, 'title set ship')
+  expect(osa(seen).map(a => a.slice(-3))).toEqual([['/dev/ttys006', '', 'ship']])
+  expect((await nudge($, 'title')).text).toContain('Tab title: (none). Window title: ship.')
+  seen.argv.length = 0
+  await start($)
+  expect(osa(seen).map(a => a.slice(-3))).toEqual([['/dev/ttys006', '', 'ship']])
+})
+
 test('off stops the titles and on brings them back', async ($, on) => {
   const seen = world(on, { env: ROLE_ENV })
   expect((await nudge($, 'title off')).text).toBe('Titles are now off.')

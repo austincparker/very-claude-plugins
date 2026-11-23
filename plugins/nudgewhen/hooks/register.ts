@@ -239,6 +239,7 @@ async function sample($: EngineInterface) {
 
 /** One session at a time fires nudges: the one that last claimed the store within a few ticks. */
 async function ownsFiring($: EngineInterface, now: number): Promise<boolean> {
+  if (state.sessionId === '') return false
   const o = await $.store.get('owner')
   const rec = o !== null && typeof o === 'object' ? (o as Record<string, unknown>) : {}
   const at = num(rec.at)
@@ -277,8 +278,10 @@ function restoreDue($: EngineInterface, unshown: Nudge[], at: number): Promise<v
   const ids = new Set(unshown.map(n => n.id))
   return locked(async () => {
     const have = readNudges(await $.store.get('nudges'))
+    // A recurring nudge was already rescheduled under its id: put the occurrence that never showed back in its place.
+    const back = new Map(unshown.map(n => [n.id, n]))
     const present = new Set(have.map(n => n.id))
-    await $.store.set('nudges', [...have, ...unshown.filter(n => !present.has(n.id))])
+    await $.store.set('nudges', [...have.map(n => back.get(n.id) ?? n), ...unshown.filter(n => !present.has(n.id))])
     await $.store.set('fired', readFired(await $.store.get('fired')).filter(f => !(f.at === at && ids.has(f.id))))
   })
 }
@@ -572,6 +575,13 @@ async function segmentPath($: EngineInterface): Promise<string | null> {
   return dir === null || !SESSION_ID.test(state.sessionId) ? null : `${dir}/${state.sessionId}.txt`
 }
 
+/** Removes segment and prior-cache files a crashed or killed session left behind: nothing rewrites them after a day. */
+async function sweepStale($: EngineInterface) {
+  const dir = stateDir(await $.env.get('CLAUDE_CONFIG_DIR'), await $.env.get('HOME'))
+  if (dir === null) return
+  await run($, ['find', dir, '-maxdepth', '1', '-type', 'f', '(', '-name', '*.txt', '-o', '-name', '*.prior', '-o', '-name', '*.tmp', ')', '-mmin', '+1440', '-delete'])
+}
+
 /** Writes the segment file when its body or path changed or a minute has passed, so the launcher never reads a stale stamp. */
 async function writeSegments($: EngineInterface, now: number, list: string, rows: [string, string][]) {
   if (state.isEnded) return
@@ -586,8 +596,11 @@ async function writeSegments($: EngineInterface, now: number, list: string, rows
   // Write beside the target and rename, so the launcher never reads a partly written file.
   const tmp = `${path}.tmp`
   try {
-    if ((await run($, ['mkdir', '-p', path.slice(0, path.lastIndexOf('/'))])) === null) throw new Error('mkdir failed')
+    // The rows carry the branch, cost and hosted nudge text: keep the directory and the file to this user.
+    const dir = path.slice(0, path.lastIndexOf('/'))
+    if ((await run($, ['mkdir', '-p', dir])) === null || (await run($, ['chmod', '700', dir])) === null) throw new Error('mkdir failed')
     await $.fs.write(tmp, segmentFile(now, list, rows))
+    if ((await run($, ['chmod', '600', tmp])) === null) throw new Error('chmod failed')
     if ((await run($, ['mv', '-f', tmp, path])) === null) throw new Error('mv failed')
     // session.end may have cleaned up while this write was in flight.
     if (state.isEnded) await run($, ['rm', '-f', path, tmp])
@@ -821,6 +834,15 @@ function rawMuted(result: McpToolResult): string[] | null {
   }
 }
 
+let muteTail: Promise<unknown> = Promise.resolve()
+
+/** Runs `fn` after every earlier mute or unmute: each one reads the server's list and writes it back whole, so two must not overlap. */
+function serialMute<T>(fn: () => Promise<T>): Promise<T> {
+  const next = muteTail.then(fn, fn)
+  muteTail = next.catch(() => undefined)
+  return next
+}
+
 const HOSTED_FAILED = 'Could not reach your hosted preferences. Try again.'
 
 async function hostedControl($: EngineInterface, verb: string, arg: string, now: number): Promise<string> {
@@ -967,7 +989,8 @@ async function wantedTitles($: EngineInterface): Promise<TitleEntry> {
   try {
     set = await $.env.get('NUDGEWHEN_SET')
   } catch {}
-  if (stored?.cleared) return { role: '', set: '' }
+  // After /nudge title clear the environment never fills a title back in; only titles set since then show.
+  if (stored?.cleared) return { role: cleanTitle(stored.role), set: cleanTitle(stored.set) }
   return {
     role: cleanTitle(stored?.role ?? '') || cleanTitle(role ?? ''),
     set: cleanTitle(stored?.set ?? '') || cleanTitle(set ?? ''),
@@ -1021,7 +1044,8 @@ async function titleCommand($: EngineInterface, arg: string): Promise<string> {
     return 'Titles cleared.'
   }
   const cur = await wantedTitles($)
-  const next = 'role' in p ? { ...cur, role: p.role } : { ...cur, set: p.set }
+  const wasCleared = readTitleMap(await $.store.get('titles'))[state.sessionId]?.cleared === true
+  const next: TitleEntry = { ...('role' in p ? { ...cur, role: p.role } : { ...cur, set: p.set }), ...(wasCleared ? { cleared: true as const } : {}) }
   await keep(next)
   const r = await setTitles($, next)
   if (r !== 'ok') return `Saved, but the title ${r === 'failed' ? 'could not be set (osascript failed).' : NOT_SET}`
@@ -1083,7 +1107,11 @@ async function handle($: EngineInterface, args: string): Promise<string> {
   const ln = /^line(?:\s+(.*))?$/i.exec(a)
   if (ln) return lineCommand($, (ln[1] ?? '').trim())
   const hc = /^(prefs|mute|unmute|failures-only|kinds)(?:\s+(.*))?$/i.exec(a)
-  if (hc) return hostedControl($, (hc[1] ?? '').toLowerCase(), (hc[2] ?? '').trim(), now)
+  if (hc) {
+    const verb = (hc[1] ?? '').toLowerCase()
+    const go = () => hostedControl($, verb, (hc[2] ?? '').trim(), now)
+    return verb === 'mute' || verb === 'unmute' ? serialMute(go) : go()
+  }
   const v = /^(snooze|pause|resume|bedtime|wake|hours|days|quiet)(?:\s+(.*))?$/i.exec(a)
   if (v) return control($, (v[1] ?? '').toLowerCase(), (v[2] ?? '').trim(), now)
   const m = /^(?:cancel|clear|remove|rm|delete)\s+(.+)$/i.exec(a)
@@ -1137,8 +1165,8 @@ async function noteInput($: EngineInterface) {
 export const register: Register = (on, options) => {
   state.stop?.()
   setHosted(undefined)
-  const { queue, isBusy, cloudRun, statusRun, inflight } = state
-  Object.assign(state, fresh(), { queue, isBusy, cloudRun, statusRun, inflight })
+  const { queue, isBusy, cloudRun, statusRun, inflight, refresh } = state
+  Object.assign(state, fresh(), { queue, isBusy, cloudRun, statusRun, inflight, refresh })
   const read = config(options)
   state.cfg = read.cfg
   state.options = { ...options }
@@ -1171,6 +1199,7 @@ export const register: Register = (on, options) => {
     })
     if (e.isInteractive) {
       await $.store.set('lastInput', await $.clock.now())
+      void sweepStale($).catch(() => undefined)
       state.stop?.()
       const timer = $.clock.every(TICK_MS, () => void track(tick($)))
       state.stop = () => timer.cancel()
@@ -1209,7 +1238,9 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('command.run', { command: 'nudge' }, async ($, e) => ({ text: await handle($, e.args) }))
+  on('command.run', { command: 'nudge' }, async ($, e) => ({ text: await handle($, e.args) })).catch((_$, _e, next) => ({
+    text: `nudgewhen failed: ${String(next.error)}`,
+  }))
 
   on('tool.call', { tool: TOOL }, async ($, e) => ({
     result: await answerTool($, e as unknown as Record<string, unknown>),

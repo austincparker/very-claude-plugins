@@ -77,6 +77,15 @@ test('a prior statusLine key the launcher does not set is kept', () => {
   expect(statusLine(r).hideVimModeIndicator).toBe(true)
 })
 
+test('a launcher statusLine hands on only a base64 or dash prior, never shell text', () => {
+  const launcher = (tail: string) => ({ statusLine: { command: `'/old'/bin/statusline wrap "${STATE}" ${tail}` } })
+  expect(statusLine(answer([cfg('only')], launcher(b64('old')), ROOT)).command).toBe(`'${ROOT}'/bin/statusline only "${STATE}" ${b64('old')}`)
+  expect(statusLine(answer([cfg('only')], launcher('-'), ROOT)).command).toBe(`'${ROOT}'/bin/statusline only "${STATE}" -`)
+  for (const bad of ['$(touch x)', ';touch', '`id`', 'a|b', "'x'"]) {
+    expect(statusLine(answer([cfg('only')], launcher(bad), ROOT)).command).toBe(`'${ROOT}'/bin/statusline only "${STATE}" -`)
+  }
+})
+
 test('only mode still passes the prior command', () => {
   const r = answer([cfg('only')], { statusLine: { command: 'old' } }, ROOT)
   expect(statusLine(r).command).toBe(`'${ROOT}'/bin/statusline only "${STATE}" ${b64('old')}`)

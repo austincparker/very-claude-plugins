@@ -262,9 +262,12 @@ test('/nudge line refuses a bad kind, empty text and long text, and stops at 200
 test('lines never leave the machine', async ($, on) => {
   const now = localAt(12)
   const { clock, shown } = world(on, now, {}, hostedCi(now))
-  await start($, false)
+  await start($)
   await nudge($, 'line add any secret-banter-xyz')
   await nudge($, 'tone vulgar')
+  await clock.settle()
   await clock.advance(10 * MINUTE)
+  // The poll and its ack ran, so the empty-list pass is ruled out.
+  expect(shown.calls.length).toBeGreaterThan(0)
   expect(shown.calls.join('')).not.toMatch(/secret-banter-xyz/)
 })

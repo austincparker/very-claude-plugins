@@ -4,6 +4,8 @@ type SettingsLayer = { source: string; settings: Readonly<Record<string, unknown
 
 export const STATE_DIR = '${CLAUDE_CONFIG_DIR:-$HOME/.claude}/nudgewhen/status'
 export const INTERVAL_MAX = 30
+/** The launcher's last argument: `-` or base64, nothing the shell would read as syntax. */
+const PRIOR_ARG = /^(-|[A-Za-z0-9+/=]+)$/
 export const SESSION_ID = /^[A-Za-z0-9_-]+$/
 
 export type StatusMode = 'wrap' | 'only'
@@ -86,8 +88,11 @@ export function answer(layers: readonly SettingsLayer[], prior: Readonly<Obj>, r
   if (hooksOff(layers, prior)) return null
   const old = isObj(prior.statusLine) ? prior.statusLine : {}
   // A statusLine that already runs the launcher is not wrapped again: its own prior command is carried over.
-  const cmd =
-    typeof old.command !== 'string' ? '-' : isLauncher(old) ? old.command.slice(old.command.lastIndexOf(' ') + 1) || '-' : b64(old.command)
+  const carriedCmd = (c: string) => {
+    const last = c.slice(c.lastIndexOf(' ') + 1)
+    return PRIOR_ARG.test(last) ? last : '-'
+  }
+  const cmd = typeof old.command !== 'string' ? '-' : isLauncher(old) ? carriedCmd(old.command) : b64(old.command)
   const padding = typeof old.padding === 'number' && Number.isFinite(old.padding) ? old.padding : 0
   const interval =
     typeof old.refreshInterval === 'number' && Number.isFinite(old.refreshInterval) && old.refreshInterval > 0
