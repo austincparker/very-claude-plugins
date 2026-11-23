@@ -33,7 +33,7 @@ One line per wait, in the reply and in the project's handoff notes if it keeps a
 
 `<wait> -> <owner and pid/job id> -> <log path> -> <what done looks like> -> <what a failure leaves>`
 
-## 6. End with one line
+## 6. End with the summary line
 
 `Can close: <n> waits handed off; record: <where>.`
 
@@ -48,7 +48,7 @@ Write each `Needs me` line for a reader who knows nothing about the situation. I
 - what step comes after, and why that step needs judgment instead of a fixed command
 - what happens if the session closes first
 
-Follow the line with at most three short sentences that cover those four points. The one-line form stays as the summary.
+Follow each `Needs me` line with one short sentence per point, four at most. The line stays as the summary.
 
 ## Traps
 
