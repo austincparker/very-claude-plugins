@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.1]
+
+### Fixed
+
+- Debug log lines that carry a hosted server reason or an error message now have control characters and escape sequences removed and are cut to 200 characters.
+
 ## [0.4.0]
 
 ### Added
