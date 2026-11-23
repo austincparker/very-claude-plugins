@@ -15,12 +15,18 @@ export const PENDING_MAX = 1000
 const ID_MAX = 200
 const SOURCE_MAX = 40
 const TEXT_MAX = 300
+const LOG_MAX = 200
 
 /** `s` with control, bidi and zero-width characters (ESC, newlines, C1) made spaces and its length capped, safe to print in the terminal UI. */
 export function clean(s: string, max: number): string {
   // eslint-disable-next-line no-control-regex
   const flat = s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u00ad\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]+/g, ' ').trim()
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
+}
+
+/** Server text or an error, cleaned and capped for the debug log. */
+export function logText(v: unknown): string {
+  return clean(String(v), LOG_MAX)
 }
 
 /** Delay before the next attempt: 60 s after a success, then doubling from 60 s per consecutive failure, capped at 15 minutes. */

@@ -1,10 +1,16 @@
 # Changelog
 
-## [0.4.2]
+## [0.4.3]
 
 ### Changed
 
 - The idle nudge now tells the session that sitting idle is not necessary. The session stays idle only with a valid reason, given in a `Needs me` line.
+
+## [0.4.2]
+
+### Fixed
+
+- Debug log lines, command and tool failure text, and config error text that carry a hosted server reason, a denial or an error message now have control, bidi and zero-width characters replaced with a space and are cut to 200 characters.
 
 ## [0.4.1]
 
