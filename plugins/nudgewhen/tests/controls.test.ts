@@ -400,7 +400,7 @@ test('a config row the engine does not have answers with a message and keeps the
 test('a config error with control characters and excess length is cleaned and capped before the user sees it', async ($, on) => {
   world(on, localAt(12), {}, [], undefined, `bad\u001b[31m\nrow ${'x'.repeat(500)}`)
   await start($, false)
-  const text = (await nudge($, 'status sit,bed')).text
+  const text = (await nudge($, 'status sit,bed')).text ?? ''
   expect(text).not.toMatch(/[\u0000-\u001f]/)
   expect(text).toMatch(/^Could not change status_segments: .*bad \[31m row xxx/)
   expect(text.length).toBeLessThan(300)
