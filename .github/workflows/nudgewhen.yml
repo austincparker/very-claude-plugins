@@ -50,3 +50,6 @@ jobs:
 
       - name: Stop hook script
         run: sh plugins/nudgewhen/tests/stop-hook.sh
+
+      - name: Status line launcher
+        run: sh plugins/nudgewhen/tests/statusline-launcher.sh

@@ -1,0 +1,204 @@
+#!/bin/sh
+# nudgewhen status line launcher.
+# Usage: statusline <mode> <state dir> <base64 of prior command | ->
+# Reads Claude Code's status JSON on stdin once. In `wrap` mode it runs the prior status line command
+# (stopped after 1 second, killed after 2, in the user's shell) and prints its rows first, then one row of nudgewhen segments from
+# <state dir>/<session id>.txt. Any other mode behaves like `only`. Always exits 0.
+
+exec 2>/dev/null
+# The cached prior output and segment rows (branch, cwd, cost) are for this user only.
+umask 077
+
+mode=$1
+dir=$2
+b64=$3
+prior_pid=
+dog_pid=
+
+out=
+# Every descendant of pid $1, deepest first.
+# The recursion runs in a command substitution so each level keeps its own c.
+descend() {
+  for c in $(pgrep -P "$1"); do
+    sub=$(descend "$c")
+    [ -z "$sub" ] || printf '%s\n' "$sub"
+    printf '%s\n' "$c"
+  done
+}
+# reap <pid> [signal]: signal the process's group (each background job leads its own) and all its descendants.
+reap() {
+  kids=$(descend "$1")
+  kill -"${2:-TERM}" -- "-$1" 2>/dev/null
+  kill -"${2:-TERM}" "$1" $kids
+}
+# Stop the prior command and its children, and the watchdog; leave no temp file behind.
+stop() {
+  [ -z "$prior_pid" ] || reap "$prior_pid"
+  [ -z "$dog_pid" ] || reap "$dog_pid"
+  [ -z "$out" ] || rm -f "$out" "$out.kids"
+}
+trap 'stop; exit 0' TERM INT HUP PIPE
+
+input=$(cat)
+
+# session_id without jq; only [A-Za-z0-9_-] is accepted, so it is safe as a file name.
+# shellcheck disable=SC2020
+sid=$(printf '%s' "$input" | tr ',{}' '\n\n\n' |
+  sed -n 's/^[[:space:]]*"session_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9_-][A-Za-z0-9_-]*\)"[[:space:]]*$/\1/p' |
+  head -n1)
+
+cache=
+if [ -n "$sid" ] && [ -n "$dir" ]; then
+  if mkdir -p "$dir"; then
+    chmod 700 "$dir"
+    cache=$dir/$sid
+    # Files a crashed or killed session left behind: segment rows and prior caches idle for a day.
+    find "$dir" -maxdepth 1 -type f \( -name '*.txt' -o -name '*.prior' \) -mmin +1440 -exec rm -f {} +
+  fi
+fi
+
+# --- prior command (wrap only) ---
+if [ "$mode" = wrap ] && [ -n "$b64" ] && [ "$b64" != - ]; then
+  cmd=$(printf '%s' "$b64" | base64 -d || printf '%s' "$b64" | base64 -D)
+  if [ -n "$cmd" ]; then
+    if [ -n "$cache" ]; then
+      out=$cache.prior.$$
+    else
+      out=$(mktemp "${TMPDIR:-/tmp}/nudgewhen-prior.XXXXXX") || out=
+    fi
+    # Temp files a killed launcher left behind, and a prior cache its session no longer owns.
+    [ -z "$dir" ] || find "$dir" -maxdepth 1 \( -name '*.prior' -o -name '*.prior.*' \) -mmin +10 -exec rm -f {} +
+    # The prior runs under the user's own sh-compatible shell, so bash or zsh syntax works; else bash if present, else sh.
+    case ${SHELL##*/} in
+      bash | zsh | sh | dash | ksh) shell=$SHELL ;;
+      *) shell=$(command -v bash) || shell=/bin/sh ;;
+    esac
+    [ -x "$shell" ] || shell=/bin/sh
+    set -m
+    "$shell" -c "$cmd" >"$out" <<NUDGEWHEN_INPUT &
+$input
+NUDGEWHEN_INPUT
+    prior_pid=$!
+    (
+      p=$prior_pid
+      sleep 1
+      # Without job control (dash and no tty) the group kill does nothing: the descendants are noted before the TERM, and the launcher KILLs them by pid.
+      [ -z "$out" ] || descend "$p" >"$out.kids"
+      reap "$p"
+      sleep 1
+      kill -0 "$p" && reap "$p" KILL
+    ) >/dev/null 2>&1 &
+    dog_pid=$!
+    wait "$prior_pid"
+    rc=$?
+    # Anything the prior left in its group (children that ignored the TERM) dies now, so none keeps $out open.
+    kill -KILL -- "-$prior_pid" 2>/dev/null
+    if [ -n "$out" ] && [ -s "$out.kids" ]; then
+      # shellcheck disable=SC2046
+      kill -KILL $(cat "$out.kids") 2>/dev/null
+    fi
+    [ -z "$out" ] || rm -f "$out.kids"
+    prior_pid=
+    reap "$dog_pid"
+    dog_pid=
+    # A prior killed by a signal (rc 128 and up) has partial rows; a non-zero exit keeps the rows it printed.
+    if [ "$rc" -eq 0 ] || { [ "$rc" -lt 128 ] && [ -s "$out" ]; }; then
+      if [ -n "$cache" ]; then
+        mv -f "$out" "$cache.prior" || rm -f "$out"
+      else
+        awk '{ printf "%s\033[0m\n", $0 }' "$out"
+        rm -f "$out"
+      fi
+    else
+      rm -f "$out"
+    fi
+    out=
+    # A cached prior older than two minutes is not shown, like the segment file.
+    if [ -n "$cache" ] && [ -f "$cache.prior" ]; then
+      pm=$(stat -c %Y "$cache.prior" || stat -f %m "$cache.prior")
+      case $pm in '' | *[!0-9]*) pm=0 ;; esac
+      [ $(($(date +%s) - pm)) -lt 120 ] && awk '{ printf "%s\033[0m\n", $0 }' "$cache.prior"
+    fi
+  fi
+fi
+
+# --- segment row ---
+[ -n "$cache" ] || exit 0
+file=$cache.txt
+[ -f "$file" ] || exit 0
+
+content=$(cat "$file") || exit 0
+first=$(printf '%s\n' "$content" | head -n1)
+case $first in
+  'v1 '*) ms=${first#v1 } ;;
+  *) exit 0 ;;
+esac
+case $ms in
+  '' | *[!0-9]*) exit 0 ;;
+esac
+[ ${#ms} -le 18 ] || exit 0
+if [ ${#ms} -le 3 ]; then
+  secs=0
+else
+  secs=${ms%???}
+fi
+secs=$(printf '%s' "$secs" | sed 's/^0*//')
+now=$(date +%s)
+age=$((now - ${secs:-0}))
+[ "$age" -ge 0 ] && [ "$age" -lt 120 ] || exit 0
+
+jqout=
+if command -v jq >/dev/null; then
+  jqout=$(printf '%s' "$input" | jq -r '
+    def row(n; t): try (t | select(type == "string" and . != "") | gsub("[\u0000-\u001f\u007f-\u009f]"; " ") | n + "\t" + .) catch empty;
+    row("effort"; .effort.level | select(type == "string" and . != "") | "effort " + .),
+    row("fast"; select(.fast_mode == true) | "fast"),
+    row("vim"; .vim.mode | select(type == "string" and . != "") | "vim " + .),
+    row("pr"; select(.pr.number != null)
+      | (if .pr.kind == "mr" then "MR !" else "PR #" end) + (.pr.number | tostring)
+        + (if (.pr.review_state | type) == "string" and .pr.review_state != "" then " " + .pr.review_state else "" end)),
+    row("style"; .output_style.name | select(type == "string" and . != "default")),
+    row("worktree"; (.worktree.name // .workspace.git_worktree) | select(type == "string")),
+    row("dir"; (.workspace.current_dir // .cwd) | select(type == "string" and . != "") | sub("/+$"; "") | if . == "" then "/" else split("/") | last end),
+    row("lines"; (.cost.total_lines_added // 0) as $a | (.cost.total_lines_removed // 0) as $r
+      | select(($a | type) == "number" and ($r | type) == "number" and ($a != 0 or $r != 0))
+      | "+\($a) -\($r)")
+  ')
+fi
+
+row=$(NUDGEWHEN_JQ=$jqout awk '
+  BEGIN {
+    split("effort fast vim pr style worktree dir lines", names, " ")
+    for (i in names) std[names[i]] = 1
+    n = split(ENVIRON["NUDGEWHEN_JQ"], jl, "\n")
+    for (i = 1; i <= n; i++) {
+      p = index(jl[i], "\t")
+      if (p > 1 && substr(jl[i], 1, p - 1) in std) jv[substr(jl[i], 1, p - 1)] = substr(jl[i], p + 1)
+    }
+  }
+  { sub(/\r$/, "") }
+  NR == 2 { list = $0 }
+  NR >= 3 {
+    p = index($0, "\t")
+    nm = tolower(substr($0, 1, p - 1))
+    if (p > 1 && !(nm in std)) fv[nm] = substr($0, p + 1)
+  }
+  END {
+    m = split(list, items, ",")
+    out = ""
+    for (i = 1; i <= m; i++) {
+      k = tolower(items[i]); gsub(/^[ \t]+|[ \t]+$/, "", k)
+      if (k == "" || (k in seen)) continue
+      seen[k] = 1
+      t = (k in std) ? jv[k] : fv[k]
+      if (t == "") continue
+      out = (out == "" ? "" : out "  ·  ") t
+    }
+    if (out != "") print out
+  }
+' <<NUDGEWHEN_FILE
+$content
+NUDGEWHEN_FILE
+)
+[ -z "$row" ] || printf '%s\n' "$row"
+exit 0
