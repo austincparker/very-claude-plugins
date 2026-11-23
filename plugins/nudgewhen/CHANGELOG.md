@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Debug log lines, command and tool failure text, and config error text that carry a hosted server reason, a denial or an error message now have control characters and escape sequences removed and are cut to 200 characters.
+- Debug log lines, command and tool failure text, and config error text that carry a hosted server reason, a denial or an error message now have control, bidi and zero-width characters replaced with a space and are cut to 200 characters.
 
 ## [0.4.0]
 
