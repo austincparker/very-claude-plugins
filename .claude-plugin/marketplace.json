@@ -6,7 +6,7 @@
     {
       "name": "nudgewhen",
       "source": "./plugins/nudgewhen",
-      "description": "Nudges in Claude Code: take a break, go to bed, and any reminder you set with /nudge or by asking Claude."
+      "description": "Nudges in Claude Code: take a break, go to bed, and any reminder you set with /nudge or by asking Claude. After you sign in, it can also connect to the hosted server at nudgewhen.dev for CI and review nudges."
     },
     {
       "name": "devibe",
