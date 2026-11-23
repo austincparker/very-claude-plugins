@@ -158,7 +158,7 @@ test('a weekday repeat skips the weekend, and says so in the list', () => {
 })
 
 /** The engine beneath the mod: idle machine, recorded toasts, notifications and config writes, hosted polls on demand. */
-function world(on: On, now: number, entries: Record<string, unknown> = {}, hostedNudges: unknown[] = [], configError?: string) {
+function world(on: On, now: number, entries: Record<string, unknown> = {}, hostedNudges: unknown[] = [], configError?: string, configDeny?: string) {
   const clock = mock.clock(on, { now })
   mock.store(on, entries)
   const shown = {
@@ -191,6 +191,7 @@ function world(on: On, now: number, entries: Record<string, unknown> = {}, hoste
   on('tool.call', () => ({ result: {} }))
   on('config.set', (_, e) => {
     if (configError !== undefined) throw new Error(configError)
+    if (configDeny !== undefined) return { deny: configDeny }
     shown.config.push({ key: e.key, value: e.value })
     return { value: e.value }
   })
@@ -394,6 +395,15 @@ test('a config row the engine does not have answers with a message and keeps the
   const text = (await nudge($, 'status sit,bed')).text
   expect(text).toMatch(/^Could not change status_segments: /)
   expect(text).toMatch(/Set it in \/config instead\.$/)
+})
+
+test('a config error with control characters and excess length is cleaned and capped before the user sees it', async ($, on) => {
+  world(on, localAt(12), {}, [], undefined, `bad\u001b[31m\nrow ${'x'.repeat(500)}`)
+  await start($, false)
+  const text = (await nudge($, 'status sit,bed')).text
+  expect(text).not.toMatch(/[\u0000-\u001f]/)
+  expect(text).toMatch(/^Could not change status_segments: .*bad \[31m row xxx/)
+  expect(text.length).toBeLessThan(300)
 })
 
 test('an empty hours, days or quiet clears the setting', async ($, on) => {

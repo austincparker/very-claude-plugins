@@ -1,5 +1,6 @@
 import type { CommandInfo, EngineInterface, PluginOptions, Register } from 'claude-code'
 
+import { logText } from './cloud'
 import { MINUTE } from './schedule'
 
 type On = Parameters<Register>[0]
@@ -108,7 +109,7 @@ function arm($: EngineInterface, ms: number) {
   const gen = idle.gen
   const timer = $.clock.after(ms, () => {
     idle.cancel = undefined
-    void fire($, gen).catch(err => $.ui.log(`nudgewhen idle: ${String(err)}`, { to: 'debug' }))
+    void fire($, gen).catch(err => $.ui.log(`nudgewhen idle: ${logText(err)}`, { to: 'debug' }))
   })
   idle.cancel = () => timer.cancel()
 }
@@ -126,7 +127,7 @@ async function clearReport($: EngineInterface) {
   try {
     await $.fs.write(idle.file, '')
   } catch (err) {
-    $.ui.log(`nudgewhen idle: clear report: ${String(err)}`, { to: 'debug' })
+    $.ui.log(`nudgewhen idle: clear report: ${logText(err)}`, { to: 'debug' })
   }
 }
 
@@ -198,7 +199,7 @@ async function nudge($: EngineInterface, gen: number) {
     await $.command.run({ command: cmd })
     return
   } catch (err) {
-    $.ui.log(`nudgewhen idle: command.run: ${String(err)}`, { to: 'debug' })
+    $.ui.log(`nudgewhen idle: command.run: ${logText(err)}`, { to: 'debug' })
   }
   if (gen !== idle.gen) {
     unmark()
@@ -208,7 +209,7 @@ async function nudge($: EngineInterface, gen: number) {
     // The host refuses a submitted prompt that begins with a slash.
     await $.prompt.submit({ text: `Use the ${cmd} skill now.` })
   } catch (err) {
-    $.ui.log(`nudgewhen idle: prompt.submit: ${String(err)}`, { to: 'debug' })
+    $.ui.log(`nudgewhen idle: prompt.submit: ${logText(err)}`, { to: 'debug' })
     unmark()
     if (gen === idle.gen) $.ui.toast(`nudgewhen: could not start it; run /${cmd}`, { timeoutMs: 15_000 })
   }
@@ -228,7 +229,7 @@ async function removeDir($: EngineInterface, dir: string | undefined) {
   try {
     await $.process.run(['rm', '-rf', '--', dir], { timeoutMs: 5000 })
   } catch (err) {
-    $.ui.log(`nudgewhen idle: remove report: ${String(err)}`, { to: 'debug' })
+    $.ui.log(`nudgewhen idle: remove report: ${logText(err)}`, { to: 'debug' })
   }
 }
 
@@ -277,7 +278,7 @@ async function begin($: EngineInterface) {
   if (r.deny === undefined) {
     idle.file = `${dir}/nudgewhen-idle-${idle.sessionId}.json`
   } else {
-    $.ui.log(`nudgewhen idle: off for this session: ${r.deny}`, { to: 'debug' })
+    $.ui.log(`nudgewhen idle: off for this session: ${logText(r.deny)}`, { to: 'debug' })
     await removeReport($)
   }
 }
@@ -293,7 +294,7 @@ export function registerIdle(on: On, options: PluginOptions): void {
     try {
       await begin($)
     } catch (err) {
-      $.ui.log(`nudgewhen idle: off for this session: ${String(err)}`, { to: 'debug' })
+      $.ui.log(`nudgewhen idle: off for this session: ${logText(err)}`, { to: 'debug' })
       await removeReport($)
     }
     return next(e)

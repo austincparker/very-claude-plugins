@@ -717,20 +717,20 @@ async function forget($: EngineInterface): Promise<string> {
 async function setting($: EngineInterface, key: string, value: string): Promise<string | null> {
   try {
     const r = await $.config.set({ key: `nudgewhen.${key}`, value })
-    if (r.deny !== undefined) return `Could not change ${key}: ${r.deny}`
+    if (r.deny !== undefined) return `Could not change ${key}: ${logText(r.deny)}`
     state.options = { ...state.options, [key]: value }
     // An explicit bedtime or wake clears the saved whole-hour key, so choosing the default value sticks.
     const legacy = key === 'bedtime' ? 'bedtime_hour' : key === 'wake' ? 'wake_hour' : undefined
     let stuck: string | null = null
     if (legacy !== undefined && state.options[legacy] !== undefined) {
       state.options = Object.fromEntries(Object.entries(state.options).filter(([k]) => k !== legacy))
-      const cleared = await $.config.set({ key: `nudgewhen.${legacy}`, value: '' }).catch((err: unknown) => ({ deny: String(err) }))
-      if (cleared.deny !== undefined) stuck = `Set ${key}, but could not clear the saved ${legacy} (${cleared.deny}); clear it in /config or it overrides ${key} on the next start.`
+      const cleared = await $.config.set({ key: `nudgewhen.${legacy}`, value: '' }).catch((err: unknown) => ({ deny: logText(err) }))
+      if (cleared.deny !== undefined) stuck = `Set ${key}, but could not clear the saved ${legacy} (${logText(cleared.deny)}); clear it in /config or it overrides ${key} on the next start.`
     }
     state.cfg = config(state.options).cfg
     return stuck
   } catch (err) {
-    return `Could not change ${key}: ${err instanceof Error ? err.message : String(err)}. Set it in /config instead.`
+    return `Could not change ${key}: ${logText(err instanceof Error ? err.message : err)}. Set it in /config instead.`
   }
 }
 
@@ -1224,7 +1224,7 @@ export const register: Register = (on, options) => {
     if (path !== null) {
       const base = path.replace(/\.txt$/, '')
       if ((await run($, ['rm', '-f', path, `${path}.tmp`, `${base}.prior`])) === null) {
-        $.ui.log(`nudgewhen: could not remove ${path}`, { to: 'debug' })
+        $.ui.log(`nudgewhen: could not remove ${logText(path)}`, { to: 'debug' })
       }
       // The launcher's per-process temp files for this session.
       const dir = path.slice(0, path.lastIndexOf('/'))
@@ -1239,12 +1239,12 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'nudge' }, async ($, e) => ({ text: await handle($, e.args) })).catch((_$, _e, next) => ({
-    text: `nudgewhen failed: ${String(next.error)}`,
+    text: `nudgewhen failed: ${logText(next.error)}`,
   }))
 
   on('tool.call', { tool: TOOL }, async ($, e) => ({
     result: await answerTool($, e as unknown as Record<string, unknown>),
-  })).catch((_$, _e, next) => ({ deny: `nudgewhen failed: ${String(next.error)}` }))
+  })).catch((_$, _e, next) => ({ deny: `nudgewhen failed: ${logText(next.error)}` }))
 
   on('prompt.submit', async ($, e, next) => {
     await noteInput($).catch(() => undefined)
