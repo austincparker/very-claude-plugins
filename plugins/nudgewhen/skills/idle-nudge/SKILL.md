@@ -21,11 +21,11 @@ For each wait, check that its result will still be used when it lands: the base 
 
 ## 3. Decide
 
-A wait needs this session only when the step after it needs judgment that cannot be written down now as commands plus pass/fail checks. Fixed commands, gates with exit codes, bounded retries and notifications are mechanical. When in doubt, it is mechanical: hand it off.
+A wait needs this session only when both tests from the intro hold: the step after it needs judgment that cannot be written down now as commands plus pass/fail checks, and something that matters is lost if the session closes first. Fixed commands, gates with exit codes, bounded retries and notifications are mechanical. When in doubt, it is mechanical: hand it off.
 
 ## 4. Hand off the mechanical ones
 
-Give each to a detached owner that outlives the session: a `nohup` or `setsid` script with a log, a terminal tab or multiplexer window, a system scheduler, CI or a hosted job, or the forge's auto-merge behind required checks. Never use a background shell or in-process agent of this session; both end with it. When the host offers no detached owner, keep the wait and report it as `Needs me`.
+Give each to a detached owner that outlives the session: a `nohup` or `setsid` script with a log, a terminal tab or multiplexer window, a system scheduler, CI or a hosted job, or the forge's auto-merge behind required checks. Never use a background shell or in-process agent of this session; both end with it. When the host offers no detached owner, keep the wait running: report it as `Needs me` if closing would lose something that matters, otherwise add a one-line note and no `Needs me` line.
 
 - The owner runs every gate the session would have run, in order, and stops and records on any failure.
 - Start the owner first and confirm it runs (its pid, its first log line). Then stop the in-session copy: stop the task, delete the cron.
@@ -45,7 +45,7 @@ or, one `Needs me` line per wait that truly needs the session, each followed by 
 
 `Needs me: <wait>, because <reason>.`
 
-Each `Needs me` line names what is lost if the session closes. A wait that would lose nothing that matters gets no `Needs me` line: it is stopped or handed off.
+Each `Needs me` line names what is lost if the session closes. A wait that would lose nothing that matters gets no `Needs me` line: it is handed off, or left running with a one-line note when no detached owner exists.
 
 Write each `Needs me` line for a reader who knows nothing about the situation. In plain words, with no job ids, run ids or shorthand left unexplained:
 
