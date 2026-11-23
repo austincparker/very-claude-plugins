@@ -37,7 +37,7 @@ One line per wait, in the reply and in the project's handoff notes if it keeps a
 
 `Can close: <n> waits handed off; record: <where>.`
 
-or, one line per wait that truly needs the session:
+or, one `Needs me` line per wait that truly needs the session, each followed by up to four short sentences:
 
 `Needs me: <wait>, because <reason>.`
 
