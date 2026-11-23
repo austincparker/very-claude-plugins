@@ -6,12 +6,14 @@ on:
       - plugins/nudgewhen/**
       - .claude-plugin/marketplace.json
       - .github/workflows/nudgewhen.yml
+      - .github/nudgewhen-ci/**
   push:
     branches: [main]
     paths:
       - plugins/nudgewhen/**
       - .claude-plugin/marketplace.json
       - .github/workflows/nudgewhen.yml
+      - .github/nudgewhen-ci/**
 
 permissions:
   contents: read
@@ -32,7 +34,10 @@ jobs:
           persist-credentials: false
 
       - name: Install Claude Code
-        run: npm install --prefix "$RUNNER_TEMP/claude" @anthropic-ai/claude-code@2.1.325
+        run: |
+          mkdir -p "$RUNNER_TEMP/claude"
+          cp .github/nudgewhen-ci/package.json .github/nudgewhen-ci/package-lock.json "$RUNNER_TEMP/claude/"
+          npm ci --prefix "$RUNNER_TEMP/claude"
 
       - name: Put claude on PATH
         run: echo "$RUNNER_TEMP/claude/node_modules/.bin" >> "$GITHUB_PATH"
