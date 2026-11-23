@@ -16,7 +16,7 @@ function world(on: On, w: World = {}) {
   resetIdle()
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.store(on, {})
-  const seen = { runs: [] as string[], submits: [] as string[], toasts: [] as string[], envSets: [] as string[], procs: [] as string[] }
+  const seen = { runs: [] as string[], args: [] as string[], submits: [] as string[], toasts: [] as string[], envSets: [] as string[], procs: [] as string[] }
   const files = new Map<string, string>()
   let reportPath = ''
   on('session.id', () => ({ value: 'session-a' }))
@@ -41,7 +41,10 @@ function world(on: On, w: World = {}) {
   on('prompt.read', () => ({ value: { text: w.draft?.() ?? '', cursor: 0 } }))
   // Handing a call on with nothing beneath is how a test makes it reject.
   on('command.run', (_, e, next) => {
-    if (e.origin.kind === 'plugin') seen.runs.push(e.command)
+    if (e.origin.kind === 'plugin') {
+      seen.runs.push(e.command)
+      seen.args.push(e.args)
+    }
     return w.runFails ? next(e) : { text: '' }
   })
   on('prompt.submit', (_, e, next) => {
@@ -89,6 +92,10 @@ function start($: Engine, isInteractive = true) {
   return $.session.start({ cwd: '/', surface: 'terminal', isInteractive })
 }
 
+/** The text a nudge submits to the session when the command cannot run. */
+const idlePrompt = (cmd: string) =>
+  `Is it absolutely necessary for you to be sitting here doing nothing and being idle? Sitting idle is not necessary. Run the ${cmd} skill now: hand off or finish every wait, or give the valid reason this session must stay as a \`Needs me\` line.`
+
 test('the setting off: nothing runs', async ($, on) => {
   const { clock, seen, stop } = world(on)
   await start($)
@@ -114,6 +121,7 @@ test('a shell held two minutes runs the check once per wait', ON, async ($, on) 
   expect(seen.runs).toEqual([])
   await clock.advance(1000)
   expect(seen.runs).toEqual(['nudgewhen:idle-nudge'])
+  expect(seen.args).toEqual(['Is it absolutely necessary for you to be sitting here doing nothing and being idle?'])
   expect(seen.toasts).toEqual(['nudgewhen: idle, holding 2 waits (1 shell, 1 wake-up); running /nudgewhen:idle-nudge'])
 
   await stop($, { tasks: [{ id: 'sh-1', type: 'shell' }], crons: [{ id: 'c2', prompt: 'check ci' }] })
@@ -277,7 +285,7 @@ test('a refused command.run falls back to a prompt, then the toast', ON, async (
   await stop($, { tasks: [{ id: 'rf-1', type: 'workflow' }] })
   await clock.advance(IDLE_AFTER_MS)
   expect(seen.runs).toEqual(['nudgewhen:idle-nudge'])
-  expect(seen.submits).toEqual(['You are sitting idle while holding background work, and sitting idle is not necessary. Run the nudgewhen:idle-nudge skill now: hand off or finish every wait, or give the valid reason this session must stay.'])
+  expect(seen.submits).toEqual([idlePrompt('nudgewhen:idle-nudge')])
   expect(seen.toasts.at(-1)).toMatch(/run \/nudgewhen:idle-nudge$/)
 })
 
@@ -363,7 +371,7 @@ test('a failed plugin idle-nudge names the prefixed command in the last toast', 
   await start($)
   await stop($, { tasks: [{ id: 'pf-1', type: 'shell' }] })
   await clock.advance(IDLE_AFTER_MS)
-  expect(seen.submits).toEqual(['You are sitting idle while holding background work, and sitting idle is not necessary. Run the nudgewhen:idle-nudge skill now: hand off or finish every wait, or give the valid reason this session must stay.'])
+  expect(seen.submits).toEqual([idlePrompt('nudgewhen:idle-nudge')])
   expect(seen.toasts.at(-1)).toMatch(/run \/nudgewhen:idle-nudge$/)
 })
 
@@ -381,7 +389,7 @@ test('a bare plugin idle-nudge runs by its prefixed name, and the prompt fallbac
   await stop($, { tasks: [{ id: 'bp-1', type: 'shell' }] })
   await clock.advance(IDLE_AFTER_MS)
   expect(seen.runs).toEqual(['nudgewhen:idle-nudge'])
-  expect(seen.submits).toEqual(['You are sitting idle while holding background work, and sitting idle is not necessary. Run the nudgewhen:idle-nudge skill now: hand off or finish every wait, or give the valid reason this session must stay.'])
+  expect(seen.submits).toEqual([idlePrompt('nudgewhen:idle-nudge')])
 })
 
 test('a person\'s own idle-nudge falls back to a prompt naming it', ON, async ($, on) => {
@@ -389,7 +397,7 @@ test('a person\'s own idle-nudge falls back to a prompt naming it', ON, async ($
   await start($)
   await stop($, { tasks: [{ id: 'on-1', type: 'shell' }] })
   await clock.advance(IDLE_AFTER_MS)
-  expect(seen.submits).toEqual(['You are sitting idle while holding background work, and sitting idle is not necessary. Run the idle-nudge skill now: hand off or finish every wait, or give the valid reason this session must stay.'])
+  expect(seen.submits).toEqual([idlePrompt('idle-nudge')])
 })
 
 test('waits whose command.run and prompt.submit both fail are nudged again at the next check', ON, async ($, on) => {

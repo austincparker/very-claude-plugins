@@ -5,6 +5,8 @@ description: This skill should be used when asked for an "idle nudge", "is it ne
 
 # Idle nudge
 
+Is it absolutely necessary for you to be sitting here doing nothing and being idle?
+
 You are sitting idle while holding background work. Sitting idle and doing nothing is not necessary, and it is not the default. Start from the answer "this session does not need to wait", and act on it now.
 
 Every wait has somewhere better to be: hand it to a detached owner that outlives this session, do the step after it now, or do other open work beside it. Ending the turn only to wait is the wrong answer.
