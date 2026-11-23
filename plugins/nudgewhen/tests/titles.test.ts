@@ -235,7 +235,7 @@ test('session end leaves the titles alone', async ($, on) => {
   const seen = world(on, { env: ROLE_ENV })
   await start($)
   const before = seen.argv.length
-  await $.session.end({ reason: 'other' })
+  await $.session.end({ sessionId: 'session-a', reason: 'other', resume: { id: 'session-a' } })
   expect(seen.argv.length).toBe(before)
 })
 

@@ -1,11 +1,11 @@
-import type { On } from 'claude-code'
+import type { On, RenderSurface } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 const NOW = new Date(2026, 10, 10, 12, 0, 0, 0).getTime()
 const POLICY = { statusLine: { type: 'command', command: 'managed' } }
 
-type Opts = { surfaces?: string[]; policy?: boolean }
+type Opts = { surfaces?: RenderSurface[]; policy?: boolean }
 
 /** The engine beneath the mod, with the status line's file, surfaces and settings stubbed and every effect recorded. */
 function world(on: On, opts: Opts = {}, entries: Record<string, unknown> = {}, env: Record<string, string> = { CLAUDE_CONFIG_DIR: '/cfg', HOME: '/h' }) {

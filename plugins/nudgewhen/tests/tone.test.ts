@@ -3,6 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { KINDS, STARTER, fill, kindForSource, render, parseLine, pickLine, readLines, readTone } from '../hooks/lines'
+import type { Line } from '../hooks/lines'
 import { MINUTE } from '../hooks/schedule'
 
 const SERVER = 'plugin:nudgewhen:nudgewhen'
@@ -75,7 +76,7 @@ test('readLines keeps well-formed stored lines only, at most 200', () => {
 })
 
 test('pickLine prefers the kind, then any, then the starter set', () => {
-  const mine = [{ kind: 'ci', text: 'mine-ci' }, { kind: 'any', text: 'mine-any' }]
+  const mine: Line[] = [{ kind: 'ci', text: 'mine-ci' }, { kind: 'any', text: 'mine-any' }]
   expect(pickLine(mine, 'ci')).toBe('mine-ci')
   expect(pickLine(mine, 'landed')).toBe('mine-any')
   expect(STARTER.landed).toContain(pickLine([], 'landed'))

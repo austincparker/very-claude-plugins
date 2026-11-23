@@ -107,7 +107,7 @@ function nudge($: Engine, args: string) {
 }
 
 const start = ($: Engine) => $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-const run = async ($: Engine, args: string) => (await nudge($, args)).text
+const run = async ($: Engine, args: string) => (await nudge($, args)).text ?? ''
 
 test('parseHostedStatus reads the server shape and rejects anything else', () => {
   expect(parseHostedStatus(text(STATUS))).toEqual(STATUS)
