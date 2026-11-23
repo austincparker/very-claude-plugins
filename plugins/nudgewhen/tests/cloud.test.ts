@@ -2,7 +2,7 @@ import type { McpConnectResult, McpToolResult, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { MINUTE } from '../hooks/schedule'
-import { HOSTED_MAX, clean, delayAfter, parsePoll } from '../hooks/cloud'
+import { HOSTED_MAX, clean, logText, delayAfter, parsePoll } from '../hooks/cloud'
 
 const SERVER = 'plugin:nudgewhen:nudgewhen'
 const HOUR = 60 * MINUTE
@@ -348,6 +348,23 @@ test('one poll shows at most HOSTED_MAX nudges', async ($, on) => {
 
 test('clean makes bidi and zero-width characters spaces', () => {
   expect(clean('a\u202eb\u200bc\u2066d', 40)).toBe('a b c d')
+})
+
+test('a hosted reason with control characters, an escape and excess length is cleaned and capped in the log', async ($, on) => {
+  const hostile = `down\u0000\n\u001b[31m${'x'.repeat(500)}`
+  const { clock, shown } = world(on, NOW, { connects: [{ isConnected: false, reason: hostile, message: 'm' } as never] })
+  await start($)
+  await clock.settle()
+  await clock.advance(MINUTE)
+  const line = shown.logs.find(l => l.includes('unavailable')) ?? ''
+  expect(line).not.toMatch(/[\u0000-\u001f]/)
+  expect(line.startsWith('nudgewhen: hosted nudges unavailable (down [31mxxx')).toBe(true)
+  expect(line.length).toBeLessThan(300)
+})
+
+test('logText flattens control characters and caps length', () => {
+  expect(logText('a\u0000\nb\u001bc')).toBe('a b c')
+  expect(logText('x'.repeat(500))).toBe(`${'x'.repeat(199)}…`)
 })
 
 test('a connect that never answers times out, backs off, and local nudges keep firing', async ($, on) => {
