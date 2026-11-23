@@ -5,7 +5,11 @@ description: This skill should be used when asked for an "idle nudge", "is it ne
 
 # Idle nudge
 
-Decide whether it is necessary for this session to sit idle, wait by wait.
+You are sitting idle while holding background work. Sitting idle and doing nothing is not necessary, and it is not the default. Start from the answer "this session does not need to wait", and act on it now.
+
+Every wait has somewhere better to be: hand it to a detached owner that outlives this session, do the step after it now, or do other open work beside it. Ending the turn only to wait is the wrong answer.
+
+There is one way to stay idle: a valid reason. A wait is a valid reason only when both hold: the step after it needs this session's judgment and cannot be written down now as commands plus pass/fail checks, and something that matters is lost if this session closes first (a merge, a deploy, shipped or client work, data). State that reason in a `Needs me` line (the last section), naming what would be lost. These are not valid reasons: "it is still running", "it might need me", "it is easier to watch it here", "I will check back", or a result nobody will act on.
 
 ## 1. List every wait
 
@@ -13,11 +17,11 @@ Background shells, agents and teammates, workflows, monitors, crons, wake-ups an
 
 ## 2. Still wanted?
 
-For each wait, check that its result will still be used when it lands: the base branch has not moved under it, the commit is not superseded, the PR is still open. Cancel or restart a stale one.
+For each wait, check that its result will still be used when it lands: the base branch has not moved under it, the commit is not superseded, the PR is still open. Cancel or restart a stale one. A wait whose result nobody will act on is not wanted: stop it now and say so in one line.
 
 ## 3. Decide
 
-A wait needs this session only when the step after it needs judgment that cannot be written down now as commands plus pass/fail checks. Fixed commands, gates with exit codes, bounded retries and notifications are mechanical.
+A wait needs this session only when the step after it needs judgment that cannot be written down now as commands plus pass/fail checks. Fixed commands, gates with exit codes, bounded retries and notifications are mechanical. When in doubt, it is mechanical: hand it off.
 
 ## 4. Hand off the mechanical ones
 
@@ -41,12 +45,14 @@ or, one `Needs me` line per wait that truly needs the session, each followed by 
 
 `Needs me: <wait>, because <reason>.`
 
+Each `Needs me` line names what is lost if the session closes. A wait that would lose nothing that matters gets no `Needs me` line: it is stopped or handed off.
+
 Write each `Needs me` line for a reader who knows nothing about the situation. In plain words, with no job ids, run ids or shorthand left unexplained:
 
+- what is lost if the session closes first
 - what the wait is, and why the session started it
 - what it is waiting for
 - what step comes after, and why that step needs judgment instead of a fixed command
-- what happens if the session closes first
 
 Follow each `Needs me` line with one short sentence per point, four at most. The line stays as the summary.
 

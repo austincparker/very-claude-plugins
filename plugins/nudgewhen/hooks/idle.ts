@@ -206,7 +206,7 @@ async function nudge($: EngineInterface, gen: number) {
   }
   try {
     // The host refuses a submitted prompt that begins with a slash.
-    await $.prompt.submit({ text: `Use the ${cmd} skill now.` })
+    await $.prompt.submit({ text: `You are sitting idle while holding background work, and sitting idle is not necessary. Run the ${cmd} skill now: hand off or finish every wait, or give the valid reason this session must stay.` })
   } catch (err) {
     $.ui.log(`nudgewhen idle: prompt.submit: ${String(err)}`, { to: 'debug' })
     unmark()
