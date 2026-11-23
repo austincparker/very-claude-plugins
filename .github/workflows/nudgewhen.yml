@@ -1,0 +1,52 @@
+name: nudgewhen
+
+on:
+  pull_request:
+    paths:
+      - plugins/nudgewhen/**
+      - .claude-plugin/marketplace.json
+      - .github/workflows/nudgewhen.yml
+      - .github/nudgewhen-ci/**
+  push:
+    branches: [main]
+    paths:
+      - plugins/nudgewhen/**
+      - .claude-plugin/marketplace.json
+      - .github/workflows/nudgewhen.yml
+      - .github/nudgewhen-ci/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    env:
+      DISABLE_AUTOUPDATER: "1"
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Claude Code
+        run: |
+          mkdir -p "$RUNNER_TEMP/claude"
+          cp .github/nudgewhen-ci/package.json .github/nudgewhen-ci/package-lock.json "$RUNNER_TEMP/claude/"
+          npm ci --prefix "$RUNNER_TEMP/claude"
+
+      - name: Put claude on PATH
+        run: echo "$RUNNER_TEMP/claude/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Validate plugin
+        run: claude plugin validate --strict plugins/nudgewhen
+
+      - name: Test plugin
+        run: claude plugin test plugins/nudgewhen
+
+      - name: Stop hook script
+        run: sh plugins/nudgewhen/tests/stop-hook.sh
