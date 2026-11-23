@@ -137,7 +137,7 @@ function config(options: PluginOptions): { cfg: Config; warnings: string[] } {
   }
   // A saved whole-hour bedtime_hour or wake_hour counts as that hour while bedtime or wake still holds its default.
   const hour = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 23 ? `${String(v).padStart(2, '0')}:00` : undefined)
-  const carried: PluginOptions = { ...options }
+  const carried: Record<string, PluginOptions[string]> = { ...options }
   const oldBed = hour(options.bedtime_hour)
   const oldWake = hour(options.wake_hour)
   if (oldBed !== undefined && (options.bedtime === undefined || options.bedtime === '23:00')) carried.bedtime = oldBed
@@ -710,7 +710,7 @@ async function setting($: EngineInterface, key: string, value: string): Promise<
     const legacy = key === 'bedtime' ? 'bedtime_hour' : key === 'wake' ? 'wake_hour' : undefined
     let stuck: string | null = null
     if (legacy !== undefined && state.options[legacy] !== undefined) {
-      delete state.options[legacy]
+      state.options = Object.fromEntries(Object.entries(state.options).filter(([k]) => k !== legacy))
       const cleared = await $.config.set({ key: `nudgewhen.${legacy}`, value: '' }).catch((err: unknown) => ({ deny: String(err) }))
       if (cleared.deny !== undefined) stuck = `Set ${key}, but could not clear the saved ${legacy} (${cleared.deny}); clear it in /config or it overrides ${key} on the next start.`
     }
@@ -856,7 +856,8 @@ async function hostedControl($: EngineInterface, verb: string, arg: string, now:
   if (server === null) return SIGN_IN_HINT
   if (verb === 'prefs' || muted !== undefined) {
     const got = await hostedCall($, server, 'get_prefs', {})
-    const prefs = got === null ? null : parsePrefs(got)
+    if (got === null) return HOSTED_FAILED
+    const prefs = parsePrefs(got)
     if (prefs === null) return HOSTED_FAILED
     if (verb === 'prefs') return prefsLines(prefs, now).join('\n')
     // The server's whole list, not parsePrefs' capped copy: set_prefs replaces the list, so a trimmed one would delete the rest.
