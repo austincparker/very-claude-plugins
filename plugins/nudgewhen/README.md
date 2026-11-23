@@ -105,7 +105,7 @@ A title is at most 60 characters, control characters removed. Outside Ghostty, o
 
 ## Hosted controls
 
-The plugin ships a connection to the hosted server at `https://nudgewhen.dev/mcp`, a third-party service. Claude Code asks you to sign in (`/mcp`) the first time it is needed; until you do, nothing is sent and local nudges run as usual. The server's own tools, which Claude Code lists once you sign in, are separate from the local `nudge` tool above: that one only sets, lists and cancels your local nudges. Text from the server (a nudge's source and body, and your preferences) is untrusted: control, bidi and zero-width characters are replaced with spaces and the text is cut to length before it reaches a toast, a notification, the status line or the stored fired-nudge text, the same way local nudge text is. These controls change what the server sends you. Signed out, each answers with a one-line sign-in hint (`/mcp`).
+The plugin ships a connection to the hosted server at `https://nudgewhen.dev/mcp`, a third-party service. Sign in with `/mcp` to turn it on; until you do, the hosted poll stays off and local nudges run as usual. The server's own tools, which Claude Code lists once you sign in, are separate from the local `nudge` tool above: that one only sets, lists and cancels your local nudges. Text from the server (a nudge's source and body, and your preferences) is untrusted: control, bidi and zero-width characters are replaced with spaces and the text is cut to length before it reaches a toast, a notification, the status line or the stored fired-nudge text, the same way local nudge text is. These controls change what the server sends you. Signed out, each answers with a one-line sign-in hint (`/mcp`).
 
 | Command | Does |
 | --- | --- |
@@ -115,7 +115,24 @@ The plugin ships a connection to the hosted server at `https://nudgewhen.dev/mcp
 | `/nudge failures-only on` | CI nudges only for failures (`off` undoes it) |
 | `/nudge kinds ci,pr_landed` | which kinds you get: `ci`, `review_requested`, `review_submitted`, `pr_landed` |
 
-`/nudge snooze`, `/nudge quiet`, `/nudge pause` and `/nudge resume` also update the server when you are signed in, sending the hold's end time (or none), your quiet hours and your IANA time zone to nudgewhen.dev. There is no separate opt-out: stay signed out of the server (`/mcp`) and nothing is sent. A pause with no end is sent as a far-future time. A command waits at most 3 seconds for the server; a slower sync finishes in the background and a failure shows as a toast.
+`/nudge snooze`, `/nudge quiet`, `/nudge pause` and `/nudge resume` also update the server when you are signed in, sending the hold's end time (or none), your quiet hours and your IANA time zone to nudgewhen.dev. There is no separate opt-out: stay signed out of the server (`/mcp`) and nudgewhen sends it nothing. A pause with no end is sent as a far-future time. A command waits at most 3 seconds for the server; a slower sync finishes in the background and a failure shows as a toast.
+
+## What goes to nudgewhen.dev
+
+Until you sign in with `/mcp`, the hosted poll stays off and nudgewhen sends the server nothing. Claude Code itself still contacts `https://nudgewhen.dev/mcp` at session start, without credentials, to learn that sign-in is needed, so the server can see your IP address and Claude Code's version.
+
+Signed in, nudgewhen sends only this:
+
+| When | What it sends |
+| --- | --- |
+| About once a minute, from one open interactive session, unless a snooze, pause or quiet hours hold nudges | a request for new hosted nudges, then the ids of the ones it received, to mark them delivered |
+| Every 5 minutes, from each open interactive session | a request for the status the `hosted`, `ci` and `reviews` segments show |
+| `/nudge prefs`, `mute`, `unmute` | a request for your hosted preferences; `mute` and `unmute` then send your whole list of muted `owner/repo` names |
+| `/nudge failures-only`, `/nudge kinds` | the on or off setting, or the list of kinds |
+| `/nudge snooze`, `pause`, `resume` | the hold's end time (none for `resume`, a far-future time for a pause with no end) and your IANA time zone |
+| `/nudge quiet` | your quiet hours (empty when cleared) and your IANA time zone |
+
+Your nudges, sitting log, tone lines, titles, work hours, work days, bedtime and wake-up stay on your machine. Once you are signed in, Claude Code also lists the server's own tools to Claude, which can call them in a conversation like any MCP tool.
 
 ## Status line
 
@@ -182,7 +199,7 @@ A `statusLine` set by managed policy is never replaced. Some machines load Claud
 
 ## How it knows you're sitting
 
-On macOS it reads the system idle time (`ioreg`), on Linux `xprintidle` when installed, and otherwise the time since your last prompt. Five minutes with no keyboard or mouse input counts as a break. Nothing leaves your machine except what you set for hosted nudges while connected: quiet hours, a pause time, your time zone and muted repos go to the hosted server. Locally, some data is written down in Claude Code's plugin store: your nudges, the text of nudges that fired in the last ten minutes, and a sitting log (one row per sit and per break, minute resolution, kept 90 days and at most 5000 rows). `/nudge forget` clears the log and the fired-nudge text. A gap with no session open counts as a break, so hours of work with Claude Code closed read as one.
+On macOS it reads the system idle time (`ioreg`), on Linux `xprintidle` when installed, and otherwise the time since your last prompt. Five minutes with no keyboard or mouse input counts as a break. Nothing else leaves your machine: [What goes to nudgewhen.dev](#what-goes-to-nudgewhendev) lists what the hosted server gets. Locally, some data is written down in Claude Code's plugin store: your nudges, the text of nudges that fired in the last ten minutes, and a sitting log (one row per sit and per break, minute resolution, kept 90 days and at most 5000 rows). `/nudge forget` clears the log and the fired-nudge text. A gap with no session open counts as a break, so hours of work with Claude Code closed read as one.
 
 Nudges fire while a Claude Code session is open. One that came due while none was open fires at the next session, marked late.
 
