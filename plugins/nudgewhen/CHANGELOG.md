@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.3]
+
+### Changed
+
+- The idle nudge now tells the session that sitting idle is not necessary. The session stays idle only with a valid reason, given in a `Needs me` line.
+
 ## [0.4.2]
 
 ### Fixed
