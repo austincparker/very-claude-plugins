@@ -8,7 +8,7 @@ import { MINUTE } from '../hooks/schedule'
 
 const HOME = '/home/u'
 const CWD = '/work/app'
-const TICK = 15_000
+const TICK = 5 * MINUTE
 const USER = `${HOME}/.claude/settings.json`
 const PROJECT = `${CWD}/.claude/settings.json`
 const LOCAL = `${CWD}/.claude/settings.local.json`
@@ -22,7 +22,7 @@ function world(on: On, now: number) {
   on('env.get', (_, e) => ({ value: e.name === 'HOME' ? HOME : e.name === 'NUDGEWHEN_DICE' ? String(diceValue) : undefined }))
   const disk: Disk = { settings: {}, files: {}, unreadable: new Set() }
   const store = new Map<string, unknown>()
-  const shown = { toasts: [] as string[], logs: [] as string[] }
+  const shown = { toasts: [] as string[], logs: [] as string[], scans: 0 }
   on('store.get', (_, e) => ({ value: store.get(e.key) }))
   on('store.set', (_, e) => {
     store.set(e.key, e.value)
@@ -34,6 +34,7 @@ function world(on: On, now: number) {
   on('tool.register', (_, e) => ({ value: { tool: `mcp__nudgewhen__${e.name}` } }))
   on('process.run', () => ({ value: { exitCode: 0, stdout: '|   "HIDIdleTime" = 1000000000\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('settings.read', (_, e) => {
+    if (e.source === 'user') shown.scans += 1
     const path = e.source === 'user' ? USER : e.source === 'project' ? PROJECT : LOCAL
     if (disk.unreadable.has(path)) throw new Error('unreadable')
     return { value: (disk.settings[path] ?? {}) as Record<string, unknown> }
@@ -249,4 +250,15 @@ test('a rules file created after the first look counts from zero and fires', VUL
   disk.files[`${CWD}/.claude/rules/new.md`] = 'Never a\nDo not b\n'
   await clock.advance(TICK)
   expect(shown.toasts).toEqual([`${PREFIX}2 new never-lines in .claude/rules/new.md`])
+})
+
+test('the scan runs at session start, skips ticks inside five minutes and runs after them', VULGAR, async ($, on) => {
+  const { clock, shown } = world(on, noon)
+  await start($)
+  await clock.settle()
+  expect(shown.scans).toBe(1)
+  await clock.advance(4 * MINUTE)
+  expect(shown.scans).toBe(1)
+  await clock.advance(MINUTE)
+  expect(shown.scans).toBe(2)
 })

@@ -69,6 +69,7 @@ type Fired = { id: number; text: string; at: number }
 type Source = 'ioreg' | 'xprintidle' | 'prompts'
 
 const TICK_MS = 15_000
+const RULES_SCAN_MS = 5 * MINUTE
 const RULES_GAP_MS = 12 * 60 * MINUTE
 const AGENT_EVERY_MS = 30 * MINUTE
 const SHOW_FIRED_MS = 10 * MINUTE
@@ -99,6 +100,7 @@ const fresh = () => ({
   sessionId: '',
   cwd: '',
   skipped: new Set<string>(),
+  rulesAt: undefined as number | undefined,
   lastAgentNudge: 0,
   lastStatus: undefined as string | undefined,
   fileBody: undefined as string | undefined,
@@ -654,8 +656,11 @@ async function redraw($: EngineInterface) {
   }
 }
 
-/** Counts the rules and protections in the listed files against the stored baseline; one toast under the vulgar tone when any grew. The baseline moves under every tone and hold. */
+/** Scans at session start, then at most every five minutes. Counts the rules and protections in the listed files against the stored baseline; one toast under the vulgar tone when any grew. The baseline moves under every tone and hold. */
 async function checkRules($: EngineInterface) {
+  const at = await $.clock.now()
+  if (state.rulesAt !== undefined && at - state.rulesAt < RULES_SCAN_MS) return
+  state.rulesAt = at
   const failed = new Set<string>()
   const seen = await scan($, state.cwd, (path, err, scope) => {
     failed.add(scope)
@@ -1215,6 +1220,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     state.sessionId = await $.session.id()
     state.cwd = e.cwd
+    state.rulesAt = undefined
     state.isEnded = false
     state.fileBody = undefined
     state.fileAt = 0
