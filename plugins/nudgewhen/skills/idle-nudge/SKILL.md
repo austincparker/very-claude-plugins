@@ -41,6 +41,15 @@ or, one line per wait that truly needs the session:
 
 `Needs me: <wait>, because <reason>.`
 
+Write each `Needs me` line for a reader who knows nothing about the situation. In plain words, with no job ids, run ids or shorthand left unexplained:
+
+- what the wait is, and why the session started it
+- what it is waiting for
+- what step comes after, and why that step needs judgment instead of a fixed command
+- what happens if the session closes first
+
+Follow the line with at most three short sentences that cover those four points. The one-line form stays as the summary.
+
 ## Traps
 
 - A run on a head that moved: CI that passes on a superseded commit, or on a branch a merge would refuse, proves nothing. Check before handing it off.
