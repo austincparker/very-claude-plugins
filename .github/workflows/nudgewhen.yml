@@ -4,18 +4,20 @@ on:
   pull_request:
     paths:
       - plugins/nudgewhen/**
+      - .claude-plugin/marketplace.json
       - .github/workflows/nudgewhen.yml
   push:
     branches: [main]
     paths:
       - plugins/nudgewhen/**
+      - .claude-plugin/marketplace.json
       - .github/workflows/nudgewhen.yml
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
