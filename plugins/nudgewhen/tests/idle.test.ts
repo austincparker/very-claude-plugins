@@ -303,21 +303,15 @@ test('reportedWaits reads nothing from a missing or broken report', () => {
   for (const [text, want] of rows) expect(reportedWaits(text, 's', new Set())?.length ?? 0).toBe(want)
 })
 
-test('pickCommand prefers the person\'s own idle-nudge, then a legacy idle-check, then the plugin\'s', () => {
+test('pickCommand prefers the person\'s own idle-nudge, then the plugin\'s', () => {
   const own: CommandInfo = { name: 'idle-nudge', description: '', source: 'user' }
-  const legacy: CommandInfo = { name: 'idle-check', description: '', source: 'user' }
   const other: CommandInfo = { name: 'idle-nudge', description: '', source: 'plugin', plugin: 'else' }
-  const oldPlugin: CommandInfo = { name: 'nudgewhen:idle-check', description: '', source: 'plugin', plugin: 'nudgewhen' }
   const rows: [CommandInfo[], string | undefined][] = [
     [[PLUGIN_CMD, own], 'idle-nudge'],
-    [[PLUGIN_CMD, legacy, own], 'idle-nudge'],
-    [[PLUGIN_CMD, legacy], 'idle-check'],
     [[PLUGIN_CMD, other], 'nudgewhen:idle-nudge'],
     [[{ name: 'idle-nudge', description: '', source: 'plugin', plugin: 'nudgewhen' }], 'nudgewhen:idle-nudge'],
-    [[oldPlugin], undefined],
     [[other], undefined],
     [[PLUGIN_CMD, { name: 'idle-nudge', description: '', source: 'mcp' }], 'nudgewhen:idle-nudge'],
-    [[PLUGIN_CMD, { name: 'idle-check', description: '', source: 'builtin' }], 'nudgewhen:idle-nudge'],
     [[], undefined],
   ]
   for (const [cmds, want] of rows) expect(pickCommand(cmds)).toBe(want)
@@ -336,19 +330,7 @@ test('every nudge skill is named <descriptor>-nudge', () => {
 })
 
 const USER_NUDGE: CommandInfo = { name: 'idle-nudge', description: '', source: 'user' }
-const USER_CHECK: CommandInfo = { name: 'idle-check', description: '', source: 'user' }
-const STALE_PLUGIN: CommandInfo = { name: 'nudgewhen:idle-check', description: '', source: 'plugin', plugin: 'nudgewhen' }
 const FOREIGN: CommandInfo = { name: 'else:idle-nudge', description: '', source: 'plugin', plugin: 'else' }
-
-test('a person\'s own idle-check runs, is toasted and is prompted by its own name', ON, async ($, on) => {
-  const { clock, seen, stop } = world(on, { commands: [PLUGIN_CMD, USER_CHECK], runFails: true })
-  await start($)
-  await stop($, { tasks: [{ id: 'uc-1', type: 'shell' }] })
-  await clock.advance(IDLE_AFTER_MS)
-  expect(seen.runs).toEqual(['idle-check'])
-  expect(seen.toasts[0]).toMatch(/running \/idle-check$/)
-  expect(seen.submits).toEqual(['You are sitting idle while holding background work, and sitting idle is not necessary. Run the idle-check skill now: hand off or finish every wait, or give the valid reason this session must stay.'])
-})
 
 test('a person\'s own idle-nudge runs instead of the plugin\'s', ON, async ($, on) => {
   const { clock, seen, stop } = world(on, { commands: [PLUGIN_CMD, USER_NUDGE] })
@@ -367,32 +349,13 @@ test('a failed own idle-nudge names that command in the last toast', ON, async (
   expect(seen.toasts.at(-1)).toMatch(/run \/idle-nudge$/)
 })
 
-test('a stale or foreign plugin command alone runs nothing and toasts the hint', ON, async ($, on) => {
-  const { clock, seen, stop } = world(on, { commands: [STALE_PLUGIN, FOREIGN] })
+test('a foreign plugin command alone runs nothing and toasts the hint', ON, async ($, on) => {
+  const { clock, seen, stop } = world(on, { commands: [FOREIGN] })
   await start($)
   await stop($, { tasks: [{ id: 'sf-1', type: 'shell' }] })
   await clock.advance(IDLE_AFTER_MS)
   expect(seen.runs).toEqual([])
   expect(seen.toasts.at(-1)).toMatch(/run \/nudgewhen:idle-nudge$/)
-})
-
-test('a stale plugin idle-check alone runs nothing and toasts the hint', ON, async ($, on) => {
-  const { clock, seen, stop } = world(on, { commands: [STALE_PLUGIN] })
-  await start($)
-  await stop($, { tasks: [{ id: 'sp-1', type: 'shell' }] })
-  await clock.advance(IDLE_AFTER_MS)
-  expect(seen.runs).toEqual([])
-  expect(seen.submits).toEqual([])
-  expect(seen.toasts.at(-1)).toMatch(/run \/nudgewhen:idle-nudge$/)
-})
-
-test('a failed legacy idle-check names that command in the last toast, after one submit', ON, async ($, on) => {
-  const { clock, seen, stop } = world(on, { commands: [PLUGIN_CMD, USER_CHECK], runFails: true, submitFails: true })
-  await start($)
-  await stop($, { tasks: [{ id: 'lf-1', type: 'shell' }] })
-  await clock.advance(IDLE_AFTER_MS)
-  expect(seen.submits).toEqual(['You are sitting idle while holding background work, and sitting idle is not necessary. Run the idle-check skill now: hand off or finish every wait, or give the valid reason this session must stay.'])
-  expect(seen.toasts.at(-1)).toMatch(/run \/idle-check$/)
 })
 
 test('a failed plugin idle-nudge names the prefixed command in the last toast', ON, async ($, on) => {
@@ -404,35 +367,11 @@ test('a failed plugin idle-nudge names the prefixed command in the last toast', 
   expect(seen.toasts.at(-1)).toMatch(/run \/nudgewhen:idle-nudge$/)
 })
 
-test('pickNudgeCommand orders extra own names and never takes a plugin command as one', () => {
-  const a: CommandInfo = { name: 'old-a', description: '', source: 'user' }
-  const b: CommandInfo = { name: 'old-b', description: '', source: 'user' }
-  const asPlugin: CommandInfo = { name: 'old-a', description: '', source: 'plugin', plugin: 'else' }
-  expect(pickNudgeCommand([b, a], 'bedtime', ['old-a', 'old-b'])).toBe('old-a')
-  expect(pickNudgeCommand([asPlugin], 'bedtime', ['old-a'])).toBeUndefined()
-})
-
-test('an other-source idle-check or idle-nudge never counts as the person\'s own', () => {
+test('an other-source idle-nudge never counts as the person\'s own', () => {
   const sources = ['plugin', 'mcp', 'builtin'] as const
   for (const source of sources) {
-    for (const name of ['idle-nudge', 'idle-check']) {
-      expect(pickCommand([PLUGIN_CMD, { name, description: '', source }])).toBe('nudgewhen:idle-nudge')
-    }
+    expect(pickCommand([PLUGIN_CMD, { name: 'idle-nudge', description: '', source }])).toBe('nudgewhen:idle-nudge')
   }
-})
-
-test('a person\'s idle-nudge outranks their idle-check, with or without the plugin command listed', () => {
-  expect(pickCommand([USER_CHECK, USER_NUDGE])).toBe('idle-nudge')
-  expect(pickCommand([PLUGIN_CMD, USER_CHECK, USER_NUDGE])).toBe('idle-nudge')
-  expect(pickCommand([USER_CHECK])).toBe('idle-check')
-})
-
-test('a stale plugin idle-check next to the plugin idle-nudge runs the idle-nudge', ON, async ($, on) => {
-  const { clock, seen, stop } = world(on, { commands: [STALE_PLUGIN, PLUGIN_CMD] })
-  await start($)
-  await stop($, { tasks: [{ id: 'up-1', type: 'shell' }] })
-  await clock.advance(IDLE_AFTER_MS)
-  expect(seen.runs).toEqual(['nudgewhen:idle-nudge'])
 })
 
 test('a bare plugin idle-nudge runs by its prefixed name, and the prompt fallback names it', ON, async ($, on) => {
@@ -445,8 +384,8 @@ test('a bare plugin idle-nudge runs by its prefixed name, and the prompt fallbac
   expect(seen.submits).toEqual(['You are sitting idle while holding background work, and sitting idle is not necessary. Run the nudgewhen:idle-nudge skill now: hand off or finish every wait, or give the valid reason this session must stay.'])
 })
 
-test('a person\'s own idle-nudge falls back to a prompt naming it, with both of their skills listed', ON, async ($, on) => {
-  const { clock, seen, stop } = world(on, { commands: [PLUGIN_CMD, USER_CHECK, USER_NUDGE], runFails: true })
+test('a person\'s own idle-nudge falls back to a prompt naming it', ON, async ($, on) => {
+  const { clock, seen, stop } = world(on, { commands: [PLUGIN_CMD, USER_NUDGE], runFails: true })
   await start($)
   await stop($, { tasks: [{ id: 'on-1', type: 'shell' }] })
   await clock.advance(IDLE_AFTER_MS)

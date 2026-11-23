@@ -210,7 +210,7 @@ Nudges fire while a Claude Code session is open. One that came due while none wa
 
 ## Nudge skills
 
-The idle nudge runs a skill named `idle-nudge`. A skill of your own with that name (source `user`) runs instead of the plugin's `nudgewhen:idle-nudge`. Without one, a skill of your own named `idle-check` runs; that fallback goes in 0.5.0, so rename it to `idle-nudge`.
+The idle nudge runs a skill named `idle-nudge`. A skill of your own with that name (source `user`) runs instead of the plugin's `nudgewhen:idle-nudge`.
 
 ## Idle nudge
 

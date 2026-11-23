@@ -16,7 +16,6 @@ const DRAFT_WAITS_MAX = 5
 const PLUGIN = 'nudgewhen'
 const DESCRIPTOR = 'idle'
 /** A person's own skill under this name runs when they have no `idle-nudge` of their own; it outranks the plugin's `nudgewhen:idle-nudge`. */
-const LEGACY_COMMAND = 'idle-check'
 const PLUGIN_COMMAND = pluginNudgeCommand(DESCRIPTOR)
 
 const LABELS: Record<string, [string, string]> = {
@@ -58,12 +57,12 @@ export function pluginNudgeCommand<D extends string>(descriptor: D): `nudgewhen:
 }
 
 /**
- * The command a nudge of this descriptor runs: the person's own `<descriptor>-nudge`, then each of `ownFallbacks` in order, then this plugin's, listed bare or with its prefix.
+ * The command a nudge of this descriptor runs: the person's own `<descriptor>-nudge`, then this plugin's, listed bare or with its prefix.
  * "Own" means a command whose `source` is exactly `user`; a plugin, MCP or built-in command never takes that slot.
  */
-export function pickNudgeCommand(cmds: readonly CommandInfo[], descriptor: string, ownFallbacks: readonly string[] = []): string | undefined {
+export function pickNudgeCommand(cmds: readonly CommandInfo[], descriptor: string): string | undefined {
   const own = nudgeCommand(descriptor)
-  for (const name of [own, ...ownFallbacks]) if (cmds.some(c => c.name === name && c.source === 'user')) return name
+  if (cmds.some(c => c.name === own && c.source === 'user')) return own
   const plugin = pluginNudgeCommand(descriptor)
   if (cmds.some(c => c.name === plugin || (c.source === 'plugin' && c.plugin === PLUGIN && c.name === own))) return plugin
   return undefined
@@ -71,7 +70,7 @@ export function pickNudgeCommand(cmds: readonly CommandInfo[], descriptor: strin
 
 /** The command the idle nudge runs. */
 export function pickCommand(cmds: readonly CommandInfo[]): string | undefined {
-  return pickNudgeCommand(cmds, DESCRIPTOR, [LEGACY_COMMAND])
+  return pickNudgeCommand(cmds, DESCRIPTOR)
 }
 
 export function summary(ws: readonly Wait[]): string {
