@@ -1,7 +1,7 @@
 import { clean } from './cloud'
 
-/** The kinds a line can be for; `any` serves every kind that has no line of its own. */
-export const KINDS = ['break', 'reminder', 'ci', 'review', 'landed', 'any'] as const
+/** The kinds a line can be for; `any` serves every kind that has no line of its own, except `rules`. */
+export const KINDS = ['break', 'reminder', 'ci', 'review', 'landed', 'rules', 'any'] as const
 export type Kind = (typeof KINDS)[number]
 export type Line = { kind: Kind; text: string }
 
@@ -15,6 +15,7 @@ export const STARTER: Record<Kind, readonly string[]> = {
   ci: ['CI shit the bed: {text}', 'Well, fuck. {text}', 'Pipeline says no, and it says it with contempt: {text}'],
   review: ['Somebody wants your damn opinion: {text}', 'Review time, you judgmental bastard: {text}', "Code is waiting for you to be a pedant about it: {text}"],
   landed: ['It landed. Holy shit, it actually landed: {text}', 'Merged. Fuck yeah: {text}', 'Shipped, you beautiful bastard: {text}'],
+  rules: ['Quit being such a bitch: {text}'],
   any: ['Hey, asshole, heads up: {text}', 'Not to be a dick, but: {text}', 'Pay attention, dammit: {text}'],
 }
 
@@ -70,6 +71,14 @@ export function readLines(v: unknown): Line[] {
     .slice(0, LINES_MAX)
 }
 
+/** `line` ending in ", you fat lard." (", you fat lard?" when it is a question) in place of its own ending, when `roll` is true. */
+export function larded(line: string, roll: boolean): string {
+  if (!roll) return line
+  const body = line.trimEnd()
+  const isQuestion = /\?[!?]*$/.test(body)
+  return `${body.replace(/[.!?\s]+$/, '')}, you fat lard${isQuestion ? '?' : '.'}`
+}
+
 const choose = <T>(list: readonly T[]): T => list[Math.floor(Math.random() * list.length)] as T
 
 /** True when every placeholder in `text` has a value in `vars`. */
@@ -77,12 +86,12 @@ function fillable(text: string, vars: { minutes?: number; text?: string }): bool
   return (vars.minutes !== undefined || !text.includes('{minutes}')) && (vars.text !== undefined || !text.includes('{text}'))
 }
 
-/** A random line for `kind`: the person's own for it, else their `any`, else the starter set for it. Lines with a placeholder `vars` has no value for are skipped. */
+/** A random line for `kind`: the person's own for it, else their `any` (never for `rules`), else the starter set for it. Lines with a placeholder `vars` has no value for are skipped. */
 export function pickLine(lines: readonly Line[], kind: Kind, vars: { minutes?: number; text?: string } = { minutes: 0, text: '' }): string {
   const usable = lines.filter(l => fillable(l.text, vars))
   const own = usable.filter(l => l.kind === kind)
   if (own.length > 0) return choose(own).text
-  const any = usable.filter(l => l.kind === 'any')
+  const any = kind === 'rules' ? [] : usable.filter(l => l.kind === 'any')
   if (any.length > 0) return choose(any).text
   return choose(STARTER[kind])
 }

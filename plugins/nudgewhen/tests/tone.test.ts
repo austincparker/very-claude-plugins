@@ -2,9 +2,12 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { KINDS, STARTER, fill, kindForSource, render, parseLine, pickLine, readLines, readTone } from '../hooks/lines'
+import { KINDS, STARTER, fill, larded, kindForSource, render, parseLine, pickLine, readLines, readTone } from '../hooks/lines'
 import type { Line } from '../hooks/lines'
 import { MINUTE } from '../hooks/schedule'
+
+// NUDGEWHEN_DICE fixes every draw; 0.5 loses the one-in-four fat-lard draw, so line texts stay exact.
+let diceValue = 0.5
 
 const SERVER = 'plugin:nudgewhen:nudgewhen'
 
@@ -47,6 +50,7 @@ test('every kind has starter lines, each clean and within the limits', () => {
   for (const kind of KINDS) {
     const lines = STARTER[kind as keyof typeof STARTER] ?? []
     if (kind === 'any') expect(lines.length).toBeGreaterThan(0)
+    else if (kind === 'rules') expect(lines).toEqual(['Quit being such a bitch: {text}'])
     else expect(lines.length).toBeGreaterThanOrEqual(3)
     for (const l of lines) {
       expect(l.length).toBeLessThanOrEqual(200)
@@ -61,7 +65,7 @@ test('parseLine takes a kind and text, strips control characters, and refuses th
   expect(parseLine('ANY  hello\u001b[31m there')).toEqual({ kind: 'any', text: 'hello [31m there' })
   expect(typeof parseLine('nope some text')).toBe('string')
   for (const k of ['sit', 'bed', 'wake']) expect(parseLine(`${k} text`)).toBe('Sit, bed and wake lines are not kept: those show only in the status line.')
-  expect(KINDS).toEqual(['break', 'reminder', 'ci', 'review', 'landed', 'any'])
+  expect(KINDS).toEqual(['break', 'reminder', 'ci', 'review', 'landed', 'rules', 'any'])
   expect(typeof parseLine('ci')).toBe('string')
   expect(typeof parseLine('ci   ')).toBe('string')
   expect(typeof parseLine(`ci ${'x'.repeat(201)}`)).toBe('string')
@@ -115,6 +119,7 @@ function world(on: On, now: number, entries: Record<string, unknown> = {}, hoste
   })
   on('ui.log', () => ({ value: undefined }))
   on('tool.call', () => ({ result: {} }))
+  on('env.get', (_, e) => ({ value: e.name === 'NUDGEWHEN_DICE' ? String(diceValue) : undefined }))
   on('config.set', (_, e) => {
     if (configError !== undefined) throw new Error(configError)
     shown.config.push({ key: e.key, value: e.value })
@@ -270,4 +275,47 @@ test('lines never leave the machine', async ($, on) => {
   // The poll and its ack ran, so the empty-list pass is ruled out.
   expect(shown.calls.length).toBeGreaterThan(0)
   expect(shown.calls.join('')).not.toMatch(/secret-banter-xyz/)
+})
+
+const LARD: [string, string, boolean, string][] = [
+  ['ends in a period', 'Merged. Fuck yeah: fix login.', true, 'Merged. Fuck yeah: fix login, you fat lard.'],
+  ['ends in an exclamation mark', 'Ship it!', true, 'Ship it, you fat lard.'],
+  ['ends in a question mark', 'Seriously?', true, 'Seriously, you fat lard?'],
+  ['ends in ?!', 'Seriously?!', true, 'Seriously, you fat lard?'],
+  ['ends in !?', 'Seriously!?', true, 'Seriously, you fat lard?'],
+  ['has no punctuation', 'Move', true, 'Move, you fat lard.'],
+  ['has trailing spaces', 'Move.  ', true, 'Move, you fat lard.'],
+  ['has a question and trailing spaces', 'Move?  ', true, 'Move, you fat lard?'],
+  ['loses the roll', 'Move.', false, 'Move.'],
+]
+for (const [name, line, roll, want] of LARD) {
+  test(`larded: a line that ${name}`, () => {
+    expect(larded(line, roll)).toBe(want)
+  })
+}
+
+test('vulgar tone adds the fat lard ending when the draw is won', { options: { tone: 'vulgar' } }, async ($, on) => {
+  const now = localAt(12)
+  diceValue = 0.1
+  try {
+    const { clock, shown } = world(on, now, { lines: [{ kind: 'reminder', text: 'move, you lump: {text}.' }], nudges: [{ id: 1, text: 'tea', due: now - 1000 }] })
+    await start($)
+    await clock.settle()
+    expect(shown.toasts).toEqual(['move, you lump: tea, you fat lard.'])
+  } finally {
+    diceValue = 0.5
+  }
+})
+
+test('plain tone never adds the fat lard ending', async ($, on) => {
+  const now = localAt(12)
+  diceValue = 0.1
+  try {
+    const { clock, shown } = world(on, now, { nudges: [{ id: 1, text: 'tea', due: now - 1000 }] })
+    await start($)
+    await clock.settle()
+    expect(shown.toasts).toEqual(['nudge: tea'])
+  } finally {
+    diceValue = 0.5
+  }
 })

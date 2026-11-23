@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0]
+
+### Added
+
+- A `rules` line kind. Under the vulgar tone, a toast tells you to quit being such a bitch when a settings file gains deny rules, ask rules or `PreToolUse` hooks, or an instruction file (`CLAUDE.md`, `.claude/rules`) gains never-style lines. `/nudge line add rules <text>` sets your own. It shows about one change in three, and not within 12 hours of the last.
+- Under the vulgar tone, about one line in four ends in ", you fat lard." (", you fat lard?" for a question).
+
 ## [0.4.3]
 
 ### Changed

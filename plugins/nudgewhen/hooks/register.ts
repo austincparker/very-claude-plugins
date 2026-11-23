@@ -32,12 +32,13 @@ import {
   parsePrefs,
   prefsLines,
 } from './hosted'
-import { KINDS as LINE_KINDS, LINES_MAX, kindForSource, render, parseLine, pickLine, readLines, readTone } from './lines'
+import { KINDS as LINE_KINDS, LINES_MAX, kindForSource, larded, render, parseLine, pickLine, readLines, readTone } from './lines'
 import type { Kind, Line, Tone } from './lines'
 import { SESSION_ID, carried, register as registerStatusLine, segmentFile, stateDir } from './statusline'
 import { TITLES_MAX, cleanTitle, isGhostty, parseTitleArgs, readTitlesOn, titleArgv, ttyPath } from './titles'
 import { MINUTE, USAGE, afterFiring, clock, dayHint, describe, parseWhen, span } from './schedule'
 import { endIdle, registerIdle } from './idle'
+import { diff, readBaseline, scan, summarize } from './rules'
 import type { Nudge } from './schedule'
 import {
   DEFAULT_SEGMENTS,
@@ -68,6 +69,7 @@ type Fired = { id: number; text: string; at: number }
 type Source = 'ioreg' | 'xprintidle' | 'prompts'
 
 const TICK_MS = 15_000
+const RULES_GAP_MS = 12 * 60 * MINUTE
 const AGENT_EVERY_MS = 30 * MINUTE
 const SHOW_FIRED_MS = 10 * MINUTE
 const LOG_MAX = 5000
@@ -95,6 +97,8 @@ const fresh = () => ({
   source: undefined as Source | undefined,
   probedAt: 0,
   sessionId: '',
+  cwd: '',
+  skipped: new Set<string>(),
   lastAgentNudge: 0,
   lastStatus: undefined as string | undefined,
   fileBody: undefined as string | undefined,
@@ -261,6 +265,12 @@ async function takeDue($: EngineInterface, now: number): Promise<Nudge[]> {
   return due
 }
 
+/** A number in [0, 1) for a one-in-N chance; NUDGEWHEN_DICE fixes it for tests. */
+async function draw($: EngineInterface): Promise<number> {
+  const fixed = Number(await Promise.resolve($.env.get('NUDGEWHEN_DICE')).catch(() => undefined))
+  return Number.isFinite(fixed) && fixed >= 0 && fixed < 1 ? fixed : Math.random()
+}
+
 /** The line to show for `kind` under the vulgar tone, filled in; null under the plain tone, which keeps its own wording. */
 async function say($: EngineInterface, kind: Kind, vars: { minutes?: number; text?: string }): Promise<string | null> {
   if (state.cfg.tone !== 'vulgar') return null
@@ -270,7 +280,7 @@ async function say($: EngineInterface, kind: Kind, vars: { minutes?: number; tex
   } catch {
     return null
   }
-  return render(pickLine(lines, kind, vars), vars)
+  return larded(render(pickLine(lines, kind, vars), vars), (await draw($)) < 1 / 4)
 }
 
 /** Puts nudges taken for showing but never shown back in the store, so the next tick shows them. */
@@ -644,6 +654,33 @@ async function redraw($: EngineInterface) {
   }
 }
 
+/** Counts the rules and protections in the listed files against the stored baseline; one toast under the vulgar tone when any grew. The baseline moves under every tone and hold. */
+async function checkRules($: EngineInterface) {
+  const failed = new Set<string>()
+  const seen = await scan($, state.cwd, (path, err, scope) => {
+    failed.add(scope)
+    if (state.skipped.has(path)) return
+    state.skipped.add(path)
+    $.ui.log(`nudgewhen: rules check skipped ${path}: ${logText(err)}`, { to: 'debug' })
+  })
+  const line = await locked(async () => {
+    const stored = await $.store.get('rulesScopes')
+    const known = new Set(Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : [])
+    const { next, added } = diff(readBaseline(await $.store.get('rules')), seen, known)
+    await $.store.set('rules', next)
+    const looked = new Set(seen.map(s => s.scope))
+    for (const s of looked) if (!failed.has(s)) known.add(s)
+    await $.store.set('rulesScopes', [...known])
+    if (added.length === 0 || state.cfg.tone !== 'vulgar') return null
+    const now = await $.clock.now()
+    const last = await $.store.get('rulesShownAt')
+    if ((await isHeldNow($, now)) || (typeof last === 'number' && now - last < RULES_GAP_MS) || (await draw($)) >= 1 / 3) return null
+    await $.store.set('rulesShownAt', now)
+    return say($, 'rules', { text: summarize(added) })
+  })
+  if (line !== null) $.ui.toast(line, { timeoutMs: 12_000 })
+}
+
 async function tick($: EngineInterface) {
   if (state.isBusy) return
   state.isBusy = true
@@ -652,6 +689,7 @@ async function tick($: EngineInterface) {
     if (state.ticks++ % (SAMPLE_MS / TICK_MS) === 0) await sample($)
     await fireDue($)
     await flushWarnings($, await $.clock.now())
+    await checkRules($)
     void track(pollCloud($)).catch(err => $.ui.log(`nudgewhen: ${logText(err)}`, { to: 'debug' }))
     void track(fetchHostedStatus($)).catch(() => undefined)
     if (state.stop === stop) await refreshStatus($)
@@ -1176,6 +1214,7 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     state.sessionId = await $.session.id()
+    state.cwd = e.cwd
     state.isEnded = false
     state.fileBody = undefined
     state.fileAt = 0
