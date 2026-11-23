@@ -1,6 +1,6 @@
 import type { EngineInterface, McpToolResult, PluginOptions, Register, SessionUsage } from 'claude-code'
 
-import { CALL_TIMEOUT_MS, PENDING_MAX, batches, delayAfter, parsePoll, readIds, readSeen } from './cloud'
+import { CALL_TIMEOUT_MS, PENDING_MAX, batches, delayAfter, logText, parsePoll, readIds, readSeen } from './cloud'
 import type { HostedNudge } from './cloud'
 import {
   fmtDays,
@@ -381,7 +381,7 @@ function settle($: EngineInterface, got: Attempt, isLive: () => boolean): Promis
     await $.store.set('cloudUp', 'nudges' in got)
     if ('server' in got) await $.store.set('cloudServer', got.server)
     if ('reason' in got) {
-      if (wasUp) $.ui.log(`nudgewhen: hosted nudges unavailable (${got.reason}); local nudges keep running`, { to: 'debug' })
+      if (wasUp) $.ui.log(`nudgewhen: hosted nudges unavailable (${logText(got.reason)}); local nudges keep running`, { to: 'debug' })
       return { fresh: [], ack: [], at: now }
     }
     if (!wasUp) $.ui.log('nudgewhen: connected to hosted nudges', { to: 'debug' })
@@ -609,7 +609,7 @@ async function writeSegments($: EngineInterface, now: number, list: string, rows
     state.fileBody = prev.body
     state.fileAt = prev.at
     state.filePath = prev.path ?? path
-    $.ui.log(`nudgewhen: ${String(err)}`, { to: 'debug' })
+    $.ui.log(`nudgewhen: ${logText(err)}`, { to: 'debug' })
   }
 }
 
@@ -652,11 +652,11 @@ async function tick($: EngineInterface) {
     if (state.ticks++ % (SAMPLE_MS / TICK_MS) === 0) await sample($)
     await fireDue($)
     await flushWarnings($, await $.clock.now())
-    void track(pollCloud($)).catch(err => $.ui.log(`nudgewhen: ${String(err)}`, { to: 'debug' }))
+    void track(pollCloud($)).catch(err => $.ui.log(`nudgewhen: ${logText(err)}`, { to: 'debug' }))
     void track(fetchHostedStatus($)).catch(() => undefined)
     if (state.stop === stop) await refreshStatus($)
   } catch (err) {
-    $.ui.log(`nudgewhen: ${String(err)}`, { to: 'debug' })
+    $.ui.log(`nudgewhen: ${logText(err)}`, { to: 'debug' })
   } finally {
     state.isBusy = false
   }
