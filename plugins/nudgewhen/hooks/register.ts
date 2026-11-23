@@ -101,6 +101,7 @@ const fresh = () => ({
   cwd: '',
   skipped: new Set<string>(),
   rulesAt: undefined as number | undefined,
+  rulesRun: undefined as Promise<unknown> | undefined,
   lastAgentNudge: 0,
   lastStatus: undefined as string | undefined,
   fileBody: undefined as string | undefined,
@@ -661,6 +662,8 @@ async function checkRules($: EngineInterface) {
   const at = await $.clock.now()
   if (state.rulesAt !== undefined && at - state.rulesAt < RULES_SCAN_MS) return
   state.rulesAt = at
+  const stop = state.stop
+  const isLive = () => state.stop === stop && !state.isEnded
   const failed = new Set<string>()
   const seen = await scan($, state.cwd, (path, err, scope) => {
     failed.add(scope)
@@ -668,7 +671,9 @@ async function checkRules($: EngineInterface) {
     state.skipped.add(path)
     $.ui.log(`nudgewhen: rules check skipped ${path}: ${logText(err)}`, { to: 'debug' })
   })
+  if (!isLive()) return
   const line = await locked(async () => {
+    if (!isLive()) return null
     const stored = await $.store.get('rulesScopes')
     const known = new Set(Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : [])
     const { next, added } = diff(readBaseline(await $.store.get('rules')), seen, known)
@@ -683,7 +688,7 @@ async function checkRules($: EngineInterface) {
     await $.store.set('rulesShownAt', now)
     return say($, 'rules', { text: summarize(added) })
   })
-  if (line !== null) $.ui.toast(line, { timeoutMs: 12_000 })
+  if (line !== null && isLive()) $.ui.toast(line, { timeoutMs: 12_000 })
 }
 
 async function tick($: EngineInterface) {
@@ -694,7 +699,7 @@ async function tick($: EngineInterface) {
     if (state.ticks++ % (SAMPLE_MS / TICK_MS) === 0) await sample($)
     await fireDue($)
     await flushWarnings($, await $.clock.now())
-    await checkRules($)
+    if (!state.rulesRun) state.rulesRun = track(checkRules($)).catch(err => $.ui.log(`nudgewhen: ${logText(err)}`, { to: 'debug' })).finally(() => { state.rulesRun = undefined })
     void track(pollCloud($)).catch(err => $.ui.log(`nudgewhen: ${logText(err)}`, { to: 'debug' }))
     void track(fetchHostedStatus($)).catch(() => undefined)
     if (state.stop === stop) await refreshStatus($)
@@ -1208,8 +1213,8 @@ async function noteInput($: EngineInterface) {
 export const register: Register = (on, options) => {
   state.stop?.()
   setHosted(undefined)
-  const { queue, isBusy, cloudRun, statusRun, inflight, refresh } = state
-  Object.assign(state, fresh(), { queue, isBusy, cloudRun, statusRun, inflight, refresh })
+  const { queue, isBusy, cloudRun, statusRun, inflight, refresh, rulesRun } = state
+  Object.assign(state, fresh(), { queue, isBusy, cloudRun, statusRun, inflight, refresh, rulesRun })
   const read = config(options)
   state.cfg = read.cfg
   state.options = { ...options }

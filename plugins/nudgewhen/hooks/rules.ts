@@ -70,24 +70,26 @@ export function summarize(added: readonly string[]): string {
 }
 
 type Source = 'user' | 'project' | 'local'
+type Target = { path: string; label: string; scope: string }
 
-/** The files read, with the label shown for each. Project files need `cwd`, user files need `home`. */
-function targets(home: string | undefined, cwd: string): { settings: { source: Source; path: string; label: string }[]; files: { path: string; label: string }[]; dirs: { path: string; label: string }[] } {
-  const settings: { source: Source; path: string; label: string }[] = []
-  const files: { path: string; label: string }[] = []
-  const dirs: { path: string; label: string }[] = []
+/** The files read, with the label and scope shown for each. Project files need `cwd`, user files need `home`. */
+function targets(home: string | undefined, cwd: string): { settings: (Target & { source: Source })[]; files: Target[]; dirs: Target[] } {
+  const settings: (Target & { source: Source })[] = []
+  const files: Target[] = []
+  const dirs: Target[] = []
   if (home) {
-    settings.push({ source: 'user', path: `${home}/.claude/settings.json`, label: '~/.claude/settings.json' })
-    files.push({ path: `${home}/.claude/CLAUDE.md`, label: '~/.claude/CLAUDE.md' })
-    dirs.push({ path: `${home}/.claude/rules`, label: '~/.claude/rules' })
+    settings.push({ source: 'user', scope: 'user', path: `${home}/.claude/settings.json`, label: '~/.claude/settings.json' })
+    files.push({ scope: 'user', path: `${home}/.claude/CLAUDE.md`, label: '~/.claude/CLAUDE.md' })
+    dirs.push({ scope: 'user', path: `${home}/.claude/rules`, label: '~/.claude/rules' })
   }
   if (cwd.startsWith('/')) {
     const root = cwd.replace(/\/+$/, '')
-    settings.push({ source: 'project', path: `${root}/.claude/settings.json`, label: '.claude/settings.json' })
-    settings.push({ source: 'local', path: `${root}/.claude/settings.local.json`, label: '.claude/settings.local.json' })
-    files.push({ path: `${root}/CLAUDE.md`, label: 'CLAUDE.md' })
-    files.push({ path: `${root}/.claude/CLAUDE.md`, label: '.claude/CLAUDE.md' })
-    dirs.push({ path: `${root}/.claude/rules`, label: '.claude/rules' })
+    const scope = root
+    settings.push({ source: 'project', scope, path: `${root}/.claude/settings.json`, label: '.claude/settings.json' })
+    settings.push({ source: 'local', scope, path: `${root}/.claude/settings.local.json`, label: '.claude/settings.local.json' })
+    files.push({ scope, path: `${root}/CLAUDE.md`, label: 'CLAUDE.md' })
+    files.push({ scope, path: `${root}/.claude/CLAUDE.md`, label: '.claude/CLAUDE.md' })
+    dirs.push({ scope, path: `${root}/.claude/rules`, label: '.claude/rules' })
   }
   return { settings, files, dirs }
 }
@@ -103,33 +105,35 @@ export async function scan($: EngineInterface, cwd: string, skip: (path: string,
     have.add(s.path)
     out.push(s)
   }
-  const scopeOf = (path: string) => (cwd.startsWith('/') && path.startsWith(`${cwd.replace(/\/+$/, '')}/`) ? cwd.replace(/\/+$/, '') : 'user')
-  const instruction = async (path: string, label: string) => {
+  const instruction = async (path: string, label: string, scope: string) => {
     try {
       if (!(await $.fs.exists(path))) return
-      add({ path, label, scope: scopeOf(path), counts: { never: countNeverLines(await $.fs.read(path)) } })
+      add({ path, label, scope, counts: { never: countNeverLines(await $.fs.read(path)) } })
     } catch (err) {
-      skip(path, err, scopeOf(path))
+      skip(path, err, scope)
     }
   }
   for (const s of t.settings) {
     try {
-      add({ path: s.path, label: s.label, scope: scopeOf(s.path), counts: countSettings(await $.settings.read({ source: s.source })) })
+      const read = await $.settings.read({ source: s.source })
+      // An existing file that reads back empty may be mid-edit: skip it so its baseline stays.
+      if (Object.keys(obj(read)).length === 0 && (await $.fs.exists(s.path))) JSON.parse(await $.fs.read(s.path))
+      add({ path: s.path, label: s.label, scope: s.scope, counts: countSettings(read) })
     } catch (err) {
-      skip(s.path, err, scopeOf(s.path))
+      skip(s.path, err, s.scope)
     }
   }
-  for (const f of t.files) await instruction(f.path, f.label)
+  for (const f of t.files) await instruction(f.path, f.label, f.scope)
   for (const d of t.dirs) {
     let names: string[] = []
     try {
       if (!(await $.fs.exists(d.path))) continue
       names = (await $.fs.list(d.path)).filter(e => e.name.endsWith('.md') && !/^dir/.test(String(e.kind))).map(e => e.name).sort()
     } catch (err) {
-      skip(d.path, err, scopeOf(d.path))
+      skip(d.path, err, d.scope)
       continue
     }
-    for (const name of names) await instruction(`${d.path}/${name}`, `${d.label}/${name}`)
+    for (const name of names) await instruction(`${d.path}/${name}`, `${d.label}/${name}`, d.scope)
   }
   return out
 }
