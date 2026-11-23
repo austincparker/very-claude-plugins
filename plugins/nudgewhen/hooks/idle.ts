@@ -15,8 +15,7 @@ const DRAFT_WAIT_MS = MINUTE
 const DRAFT_WAITS_MAX = 5
 const PLUGIN = 'nudgewhen'
 const DESCRIPTOR = 'idle'
-/** A person's own skill under this name runs when they have no `idle-nudge` of their own; it outranks the plugin's `nudgewhen:idle-nudge`. */
-const LEGACY_COMMAND = 'idle-check'
+/** The plugin's own `nudgewhen:idle-nudge`, run when the person has no `idle-nudge` of their own. */
 const PLUGIN_COMMAND = pluginNudgeCommand(DESCRIPTOR)
 
 const LABELS: Record<string, [string, string]> = {
@@ -57,13 +56,16 @@ export function pluginNudgeCommand<D extends string>(descriptor: D): `nudgewhen:
   return `${PLUGIN}:${nudgeCommand(descriptor)}`
 }
 
+/** The question every idle nudge opens with. */
+const IDLE_QUESTION = 'Is it absolutely necessary for you to be sitting here doing nothing and being idle?'
+
 /**
- * The command a nudge of this descriptor runs: the person's own `<descriptor>-nudge`, then each of `ownFallbacks` in order, then this plugin's, listed bare or with its prefix.
+ * The command a nudge of this descriptor runs: the person's own `<descriptor>-nudge`, then this plugin's, listed bare or with its prefix.
  * "Own" means a command whose `source` is exactly `user`; a plugin, MCP or built-in command never takes that slot.
  */
-export function pickNudgeCommand(cmds: readonly CommandInfo[], descriptor: string, ownFallbacks: readonly string[] = []): string | undefined {
+export function pickNudgeCommand(cmds: readonly CommandInfo[], descriptor: string): string | undefined {
   const own = nudgeCommand(descriptor)
-  for (const name of [own, ...ownFallbacks]) if (cmds.some(c => c.name === name && c.source === 'user')) return name
+  if (cmds.some(c => c.name === own && c.source === 'user')) return own
   const plugin = pluginNudgeCommand(descriptor)
   if (cmds.some(c => c.name === plugin || (c.source === 'plugin' && c.plugin === PLUGIN && c.name === own))) return plugin
   return undefined
@@ -71,7 +73,7 @@ export function pickNudgeCommand(cmds: readonly CommandInfo[], descriptor: strin
 
 /** The command the idle nudge runs. */
 export function pickCommand(cmds: readonly CommandInfo[]): string | undefined {
-  return pickNudgeCommand(cmds, DESCRIPTOR, [LEGACY_COMMAND])
+  return pickNudgeCommand(cmds, DESCRIPTOR)
 }
 
 export function summary(ws: readonly Wait[]): string {
@@ -196,7 +198,7 @@ async function nudge($: EngineInterface, gen: number) {
   }
   $.ui.toast(`${head}; running /${cmd}`, { timeoutMs: 15_000 })
   try {
-    await $.command.run({ command: cmd })
+    await $.command.run({ command: cmd, args: IDLE_QUESTION })
     return
   } catch (err) {
     $.ui.log(`nudgewhen idle: command.run: ${logText(err)}`, { to: 'debug' })
@@ -207,7 +209,7 @@ async function nudge($: EngineInterface, gen: number) {
   }
   try {
     // The host refuses a submitted prompt that begins with a slash.
-    await $.prompt.submit({ text: `You are sitting idle while holding background work, and sitting idle is not necessary. Run the ${cmd} skill now: hand off or finish every wait, or give the valid reason this session must stay.` })
+    await $.prompt.submit({ text: `${IDLE_QUESTION} Sitting idle is not necessary. Run the ${cmd} skill now: hand off or finish every wait, or give the valid reason this session must stay as a \`Needs me\` line.` })
   } catch (err) {
     $.ui.log(`nudgewhen idle: prompt.submit: ${logText(err)}`, { to: 'debug' })
     unmark()

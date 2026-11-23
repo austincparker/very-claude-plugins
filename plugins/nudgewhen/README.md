@@ -74,7 +74,7 @@ Each of these has a command that checks the value and saves it:
 
 The `tone` setting is `plain` (the default, every text as it is) or `vulgar`. Under `vulgar`, each toast and notification says a random line for its kind, drawn from your own lines or, when you have none for it, a short crude starter set. Set it in `/config` or with `/nudge tone plain` or `/nudge tone vulgar`.
 
-Add your own lines with `/nudge line add <kind> <text>`, see them with `/nudge line list [kind]` and remove one with `/nudge line rm <n>` (the number from the full list). You can keep up to 200 lines of up to 200 characters each. A kind with no line of yours uses your `any` lines, then the starters.
+Add your own lines with `/nudge line add <kind> <text>`, see them with `/nudge line list [kind]` and remove one with `/nudge line rm <n>` (the number from the full list). You can keep up to 200 lines of up to 200 characters each. A kind with no line of yours uses your `any` lines, then the starters; `rules` skips `any` and uses only its own lines, then its starter.
 
 | Kind | Used for | Example line |
 | --- | --- | --- |
@@ -83,9 +83,14 @@ Add your own lines with `/nudge line add <kind> <text>`, see them with `/nudge l
 | `ci` | hosted CI nudges | `Pipeline shit the bed: {text}` |
 | `review` | hosted review requests and reviews | `Somebody wants your damn opinion: {text}` |
 | `landed` | hosted pull request landed nudges | `Merged. Fuck yeah: {text}` |
+| `rules` | a toast, under `vulgar` only, when a file you keep rules in grew (see below) | `Quit being such a bitch: {text}` |
 | `any` | any kind with no line of its own | `Not to be a dick, but: {text}` |
 
+The `rules` line fires when something that makes Claude's work harder is added: more entries in `permissions.deny` or `permissions.ask`, or more `PreToolUse` hook commands, in `~/.claude/settings.json`, `.claude/settings.json` or `.claude/settings.local.json`; or more lines saying never, do not, don't, must not, refuse, forbidden, off limits or (HARD) in `~/.claude/CLAUDE.md`, `~/.claude/rules/*.md`, `CLAUDE.md`, `.claude/CLAUDE.md` or `.claude/rules/*.md`. Its `{text}` says what grew, such as `2 new deny rules in ~/.claude/settings.json`. nudgewhen remembers each file's count, so the first look at a file and any drop show nothing, and a change seen under the `plain` tone, a pause, a snooze or quiet hours is never shown later. It shows now and then, not on every change: a change wins a one-in-three roll, and no `rules` toast follows within 12 hours of the last. It reads only those files.
+
 `{minutes}` is how long you have been sitting (in `break` lines) and `{text}` is the nudge's own text. A line with no `{text}` gets the nudge text added after ` - `. Sit, bed and wake lines are not kept: those show only in the status line.
+
+Under `vulgar`, about one line in four ends in ", you fat lard." (", you fat lard?" when it asks a question) in place of its own ending.
 
 The status entry, `/nudge list` and the setup hints stay plain whatever the tone. Your lines stay on your machine and are never sent to the hosted server.
 
@@ -205,7 +210,7 @@ Nudges fire while a Claude Code session is open. One that came due while none wa
 
 ## Nudge skills
 
-The idle nudge runs a skill named `idle-nudge`. A skill of your own with that name (source `user`) runs instead of the plugin's `nudgewhen:idle-nudge`. Without one, a skill of your own named `idle-check` runs; that fallback goes in 0.5.0, so rename it to `idle-nudge`.
+The idle nudge runs a skill named `idle-nudge`. A skill of your own with that name (source `user`) runs instead of the plugin's `nudgewhen:idle-nudge`.
 
 ## Idle nudge
 
