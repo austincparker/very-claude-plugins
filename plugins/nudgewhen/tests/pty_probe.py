@@ -250,8 +250,8 @@ def run_once(key, sid, marker, *, flag=None, flag_path=None, debug=None, cwd=ROO
                 answered = da = 0
                 continue
             if "AllowexternalCLAUDE.mdfileimports?" in tail and not imports:
-                # the operator's global CLAUDE.md imports their own Reserved subjects note; "No" would be saved
-                # for this project and stop that note loading in later sessions here
+                # a global CLAUDE.md may import files outside the project; "No" would be saved for this
+                # project and stop those imports in later sessions here
                 seen2 = seen2 or time.time()
                 if time.time() - seen2 < 1.5:
                     continue
