@@ -4,7 +4,7 @@
 
 ### Changed
 
-- The idle nudge's `Needs me` line is written for a reader who knows nothing about the situation: plain words, no unexplained ids, and at most three short sentences saying what the wait is, what it waits for, why the next step needs judgment, and what happens if the session closes first.
+- The idle nudge's `Needs me` line is written for a reader who knows nothing about the situation: plain words, no unexplained ids, and one short sentence per point after it: what the wait is, what it waits for, why the next step needs judgment, and what happens if the session closes first.
 
 ## [0.4.0]
 
