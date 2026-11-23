@@ -1,10 +1,16 @@
 # Changelog
 
-## [0.4.1]
+## [0.4.2]
 
 ### Fixed
 
 - Debug log lines, command and tool failure text, and config error text that carry a hosted server reason, a denial or an error message now have control, bidi and zero-width characters replaced with a space and are cut to 200 characters.
+
+## [0.4.1]
+
+### Changed
+
+- The idle nudge's `Needs me` line is written for a reader who knows nothing about the situation: plain words, no unexplained ids, and one short sentence per point after it: what the wait is, what it waits for, why the next step needs judgment, and what happens if the session closes first.
 
 ## [0.4.0]
 

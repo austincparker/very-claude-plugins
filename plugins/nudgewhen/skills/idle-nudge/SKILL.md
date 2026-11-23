@@ -33,13 +33,22 @@ One line per wait, in the reply and in the project's handoff notes if it keeps a
 
 `<wait> -> <owner and pid/job id> -> <log path> -> <what done looks like> -> <what a failure leaves>`
 
-## 6. End with one line
+## 6. End with the summary line
 
 `Can close: <n> waits handed off; record: <where>.`
 
-or, one line per wait that truly needs the session:
+or, one `Needs me` line per wait that truly needs the session, each followed by up to four short sentences:
 
 `Needs me: <wait>, because <reason>.`
+
+Write each `Needs me` line for a reader who knows nothing about the situation. In plain words, with no job ids, run ids or shorthand left unexplained:
+
+- what the wait is, and why the session started it
+- what it is waiting for
+- what step comes after, and why that step needs judgment instead of a fixed command
+- what happens if the session closes first
+
+Follow each `Needs me` line with one short sentence per point, four at most. The line stays as the summary.
 
 ## Traps
 

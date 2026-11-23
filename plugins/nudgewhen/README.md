@@ -209,7 +209,7 @@ The idle nudge runs a skill named `idle-nudge`. A skill of your own with that na
 
 ## Idle nudge
 
-The `nudgewhen:idle-nudge` skill asks whether the session truly needs to sit idle. It lists what the session waits on, hands off to a detached script or job whatever needs no judgment, and ends with one line: the session can close, or what still needs it. Run it by hand anytime.
+The `nudgewhen:idle-nudge` skill asks whether the session truly needs to sit idle. It lists what the session waits on, hands off to a detached script or job whatever needs no judgment, and ends with one line saying the session can close, or one `Needs me` line per wait that still needs it, each followed by up to four short sentences. Run it by hand anytime.
 
 Turn on **Nudge sessions when idle?** and nudgewhen runs it for you. When Claude ends a turn still holding waits and you send no prompt for two minutes, it runs the nudge. Waits are background shells, agents, workflows, monitors Claude started, and scheduled wake-ups. It runs once per wait: the same waits never trigger it twice, a new one does. A draft in your prompt box holds it off a minute at a time, for up to five minutes. Nudge skills says which skill runs.
 
