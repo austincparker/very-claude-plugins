@@ -7,7 +7,7 @@ route: start claude in a pty with ANTHROPIC_API_KEY unset, the plugin loaded and
 status line; exit 0 only when the captured screen holds the prior line and the seeded segment.
 smoke: six real-screen cases (wrap, only, off, scratch repo, no jq, validate) plus a user-settings hash check;
 verdicts in smoke.md. Exit 1 on any non-usage failure (reason in probe.md or smoke.md), 2 on a missing or bad
-mode. Never types a prompt.
+mode. Never types a prompt. Each run writes its files to a new temp directory and prints its path to stderr.
 """
 import codecs
 import fcntl
@@ -30,7 +30,7 @@ import unicodedata
 import uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-WORK = os.path.join(ROOT, ".fulcrum", "work", "nudgewhen-statusline")
+WORK = ""  # main() sets it to a new temp directory
 KEYS = ["nudgewhen@inline", "nudgewhen"]
 TRUST = ["Do you trust the files in this folder", "Yes, I trust this folder", "Quick safety check"]
 DIALOG = ["Do you want", "Press Enter to continue", "Select login method", "Choose the text style", "Welcome to"]
@@ -527,7 +527,7 @@ def smoke():
     h0 = sha(st)
     head = ["# probe smoke", "argv: claude --model sonnet --effort medium --plugin-dir ... --setting-sources project,local (per case)",
             "settings file: " + st, "sha256 before: " + h0]
-    body, keys, results, q19, SCR = [], [], [], [], None
+    body, keys, results, carried, SCR = [], [], [], [], None
     ROW = lambda c: (lambda r: c["row"](r))
     nextrow = lambda lines, rows, i: rows[i + 1] if i + 1 < len(rows) else ""
 
@@ -555,7 +555,8 @@ def smoke():
     def direct(c, prior):
         return any(l.startswith(prior) for l in c["sl"])
 
-    def note_q19(c):
+    def note_carried(c):
+        """Records whether the launcher drew the mod's segment row for case `c`."""
         content = (c["content"] or "").splitlines()
         if c["seen"] is not None and c["shown"] is not None:
             r = "yes"
@@ -567,7 +568,7 @@ def smoke():
             r = "no segment file and no row"
         if content[1:2] and content[1] != "breaks,dir":
             r += "; status_segments did not reach options"
-        q19.append((c["name"], r))
+        carried.append((c["name"], r))
 
     try:
         # validate
@@ -609,7 +610,7 @@ def smoke():
             c["chk"](".prior holds first-" + M, c["prior_seen"] is not None and "first-" + M in c["prior_seen"], repr(c["prior_seen"]))
             c["chk"]("stdin captured", os.path.exists(os.path.join(RUN, "stdin-wrap.json")))
             c["extra"] = ["slow.count: %d" % count()]
-            note_q19(c)
+            note_carried(c)
             return c
 
         def only():
@@ -619,7 +620,7 @@ def smoke():
             # prints nothing, so the segment file and the never-shows check on only-M judge it, not the debug log.
             c["chk"]("segment file seen", c["seen"] is not None)
             c["chk"]("no .prior file", c["prior_seen"] is None)
-            note_q19(c)
+            note_carried(c)
             return c
 
         def off():
@@ -719,9 +720,9 @@ def smoke():
     hok = h0 == h1
     results.append(hok)
     out = head + ["## stdin keys"] + keys + body + val + ["## settings hash", "sha256 after: " + h1, "verdict: " + ("pass" if hok else "fail")]
-    out += ["Q19: " + (q19[0][1] if len(q19) == 1 else "; ".join("%s %s" % x for x in q19)) if q19 else "Q19: no case ran"]
-    q19ok = bool(q19) and all(r == "yes" for _, r in q19)
-    ok = all(results) and len(results) == 7 and q19ok
+    out += ["launcher carried: " + (carried[0][1] if len(carried) == 1 else "; ".join("%s %s" % x for x in carried)) if carried else "launcher carried: no case ran"]
+    carried_ok = bool(carried) and all(r == "yes" for _, r in carried)
+    ok = all(results) and len(results) == 7 and carried_ok
     out.append("smoke: " + ("pass" if ok else "fail"))
     with open(os.path.join(WORK, "smoke.md"), "w") as f:
         f.write("\n".join(out) + "\n")
@@ -729,10 +730,13 @@ def smoke():
 
 
 def main():
+    global WORK
     if len(sys.argv) != 2 or sys.argv[1] not in ("route", "smoke"):
         print("usage: pty_probe.py route|smoke", file=sys.stderr)
         return 2
     mode = sys.argv[1]
+    WORK = tempfile.mkdtemp(prefix="nudgewhen-probe-")
+    print("probe files: " + WORK, file=sys.stderr)
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(s, on_signal)
     try:
