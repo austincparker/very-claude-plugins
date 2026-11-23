@@ -41,11 +41,15 @@ One line per wait, in the reply and in the project's handoff notes if it keeps a
 
 `Can close: <n> waits handed off; record: <where>.`
 
+or, when a wait has no detached owner and closing loses nothing that matters:
+
+`Staying open: <n> waits left running, no detached owner; nothing lost on close.`
+
 or, one `Needs me` line per wait that truly needs the session, each followed by up to four short sentences:
 
 `Needs me: <wait>, because <reason>.`
 
-Each `Needs me` line names what is lost if the session closes. A wait that would lose nothing that matters gets no `Needs me` line: it is handed off, or left running with a one-line note when no detached owner exists.
+Each `Needs me` line names what is lost if the session closes. A wait that would lose nothing that matters gets no `Needs me` line: it is handed off, or left running with a one-line note and counted in the `Staying open` line when no detached owner exists.
 
 Write each `Needs me` line for a reader who knows nothing about the situation. In plain words, with no job ids, run ids or shorthand left unexplained:
 
