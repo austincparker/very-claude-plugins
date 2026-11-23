@@ -15,7 +15,7 @@ const DRAFT_WAIT_MS = MINUTE
 const DRAFT_WAITS_MAX = 5
 const PLUGIN = 'nudgewhen'
 const DESCRIPTOR = 'idle'
-/** A person's own skill under this name runs when they have no `idle-nudge` of their own; it outranks the plugin's `nudgewhen:idle-nudge`. */
+/** The plugin's own `nudgewhen:idle-nudge`, run when the person has no `idle-nudge` of their own. */
 const PLUGIN_COMMAND = pluginNudgeCommand(DESCRIPTOR)
 
 const LABELS: Record<string, [string, string]> = {

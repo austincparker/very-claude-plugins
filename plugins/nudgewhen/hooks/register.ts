@@ -685,8 +685,9 @@ async function checkRules($: EngineInterface) {
     const now = await $.clock.now()
     const last = await $.store.get('rulesShownAt')
     if ((await isHeldNow($, now)) || (typeof last === 'number' && now - last < RULES_GAP_MS) || (await draw($)) >= 1 / 3) return null
-    await $.store.set('rulesShownAt', now)
-    return say($, 'rules', { text: summarize(added) })
+    const shown = await say($, 'rules', { text: summarize(added) })
+    if (shown !== null) await $.store.set('rulesShownAt', now)
+    return shown
   })
   if (line !== null && isLive()) $.ui.toast(line, { timeoutMs: 12_000 })
 }
