@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { answer, b64 as encode, carried, readMode, register, segmentFile, stateDir } from '../hooks/statusline'
+import { answer, b64 as encode, carried, modeOn, readMode, register, segmentFile, stateDir } from '../hooks/statusline'
 
 const ROOT = '/plug ins/nudgewhen'
 const STATE = '${CLAUDE_CONFIG_DIR:-$HOME/.claude}/nudgewhen/status'
@@ -130,11 +130,11 @@ test('the same layers give the same answer', () => {
 })
 
 /** The `settings.read` handler the module registers, called with a stub engine. */
-function hook() {
+function hook(options: Record<string, unknown> = { status_line: 'wrap' }) {
   let h: (($: unknown, e: unknown, next: (e: unknown) => unknown) => Promise<unknown>) | undefined
   register(((name: string, fn: typeof h) => {
     if (name === 'settings.read') h = fn
-  }) as never, {})
+  }) as never, options)
   return (e: unknown, next: (e: unknown) => unknown) => h!({ plugin: { root: ROOT } }, e, next)
 }
 
@@ -221,3 +221,26 @@ test('control characters in a row cannot reach the terminal', () => {
 test('tabs and newlines in the list and names cannot add rows', () => {
   expect(segmentFile(1, 'a\nx\tb', [['n\tm', 't']])).toBe('v1 1\na x b\nn m\tt\n')
 })
+
+const registered = (options: Record<string, unknown>) => {
+  const names: string[] = []
+  register(((name: string) => names.push(name)) as never, options)
+  return names
+}
+
+const ROWS: readonly (readonly [Record<string, unknown>, string[]])[] = [
+  [{}, []],
+  [{ status_line: 'off' }, []],
+  [{ status_line: 'bogus' }, []],
+  [{ status_line: 7 }, []],
+  [{ status_line: 'wrap' }, ['settings.read']],
+  [{ status_line: 'only' }, ['settings.read']],
+  [{ status_line: ' Wrap ' }, ['settings.read']],
+]
+
+for (const [options, names] of ROWS) {
+  test(`options ${JSON.stringify(options)} register the hooks ${JSON.stringify(names)}`, () => {
+    expect(registered({ ...options })).toEqual(names)
+    expect(modeOn({ ...options })).toBe(names.length > 0)
+  })
+}
