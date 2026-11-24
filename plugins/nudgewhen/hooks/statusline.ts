@@ -116,15 +116,7 @@ export function answer(layers: readonly SettingsLayer[], prior: Readonly<Obj>, r
  */
 export const carried = { value: false, seq: 0, seen: false, hooksOff: false }
 
-/** True when the `status_line` option asks for `wrap` or `only`, read as `readMode` reads it. */
-export function modeOn(options: Readonly<Obj>): boolean {
-  const v = options.status_line
-  const mode = typeof v === 'string' ? v.trim().toLowerCase() : ''
-  return mode === 'wrap' || mode === 'only'
-}
-
-export const register: Register = (on, options) => {
-  if (!modeOn(options)) return
+export const register: Register = on => {
   on('settings.read', async ($, e, next) => {
     if (e.source !== undefined) return next(e)
     const seq = ++carried.seq
