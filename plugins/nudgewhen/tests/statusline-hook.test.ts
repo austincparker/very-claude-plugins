@@ -244,3 +244,11 @@ for (const [options, names] of ROWS) {
     expect(modeOn({ ...options })).toBe(names.length > 0)
   })
 }
+
+test('registering with status_line off clears carried', () => {
+  Object.assign(carried, { value: true, seen: true, hooksOff: true })
+  register(() => {}, { status_line: 'off' } as never)
+  expect(carried.value).toBe(false)
+  expect(carried.seen).toBe(false)
+  expect(carried.hooksOff).toBe(false)
+})

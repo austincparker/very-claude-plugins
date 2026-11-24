@@ -129,7 +129,10 @@ export function modeOn(options: Readonly<Obj>): boolean {
 export const register: Register = (on, options) => {
   // Where sec-default is seated it skips this hook and reports the skip, so it is left unregistered while the status line is off.
   // Changing an option reloads the plugin and runs register again with the new options (Claude Code's Register contract).
-  if (!modeOn(options)) return
+  if (!modeOn(options)) {
+    Object.assign(carried, { value: false, seen: false, hooksOff: false })
+    return
+  }
   on('settings.read', async ($, e, next) => {
     if (e.source !== undefined) return next(e)
     const seq = ++carried.seq
