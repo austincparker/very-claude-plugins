@@ -1,6 +1,6 @@
 {
   "name": "nudgewhen",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Nudges in Claude Code: take a break, go to bed, and any reminder you set with /nudge or by asking Claude. Optional hosted CI and review nudges come from the third-party nudgewhen.dev server, and only after you sign in to it.",
   "author": {
     "name": "Austin Parker"
