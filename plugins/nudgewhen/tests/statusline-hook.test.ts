@@ -1,3 +1,4 @@
+import type { PluginOptions } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
 import { answer, b64 as encode, carried, modeOn, readMode, register, segmentFile, stateDir } from '../hooks/statusline'
@@ -130,7 +131,7 @@ test('the same layers give the same answer', () => {
 })
 
 /** The `settings.read` handler the module registers, called with a stub engine. */
-function hook(options: Record<string, unknown> = { status_line: 'wrap' }) {
+function hook(options: PluginOptions = { status_line: 'wrap' }) {
   let h: (($: unknown, e: unknown, next: (e: unknown) => unknown) => Promise<unknown>) | undefined
   register(((name: string, fn: typeof h) => {
     if (name === 'settings.read') h = fn
@@ -222,13 +223,13 @@ test('tabs and newlines in the list and names cannot add rows', () => {
   expect(segmentFile(1, 'a\nx\tb', [['n\tm', 't']])).toBe('v1 1\na x b\nn m\tt\n')
 })
 
-const registered = (options: Record<string, unknown>) => {
+const registered = (options: PluginOptions) => {
   const names: string[] = []
   register(((name: string) => names.push(name)) as never, options)
   return names
 }
 
-const ROWS: readonly (readonly [Record<string, unknown>, string[]])[] = [
+const ROWS: readonly (readonly [PluginOptions, string[]])[] = [
   [{}, []],
   [{ status_line: 'off' }, []],
   [{ status_line: 'bogus' }, []],
@@ -247,7 +248,7 @@ for (const [options, names] of ROWS) {
 
 test('registering with status_line off clears carried', () => {
   Object.assign(carried, { value: true, seen: true, hooksOff: true })
-  register(() => {}, { status_line: 'off' } as never)
+  register((() => {}) as never, { status_line: 'off' })
   expect(carried.value).toBe(false)
   expect(carried.seen).toBe(false)
   expect(carried.hooksOff).toBe(false)
