@@ -28,11 +28,16 @@ export function readMode(layers: readonly SettingsLayer[]): StatusMode | null {
       if (!isOwnKey(key) || !isObj(cfg) || !isObj(cfg.options)) continue
       const v = cfg.options.status_line
       if (v === undefined) continue
-      const mode = typeof v === 'string' ? v.trim().toLowerCase() : ''
-      return mode === 'wrap' || mode === 'only' ? mode : null
+      return parseMode(v)
     }
   }
   return null
+}
+
+/** `wrap` or `only` from a `status_line` value, trimmed and case-folded; null for anything else. */
+export function parseMode(v: unknown): StatusMode | null {
+  const mode = typeof v === 'string' ? v.trim().toLowerCase() : ''
+  return mode === 'wrap' || mode === 'only' ? mode : null
 }
 
 /** True when Claude Code will not run a non-managed `statusLine`: hooks are all disabled, or only managed hooks run. */
@@ -116,7 +121,18 @@ export function answer(layers: readonly SettingsLayer[], prior: Readonly<Obj>, r
  */
 export const carried = { value: false, seq: 0, seen: false, hooksOff: false }
 
-export const register: Register = on => {
+/** True when the `status_line` option asks for `wrap` or `only`. */
+export function modeOn(options: Readonly<Obj>): boolean {
+  return parseMode(options.status_line) !== null
+}
+
+export const register: Register = (on, options) => {
+  // Where sec-default is seated it skips this hook and reports the skip, so it is left unregistered while the status line is off.
+  // Changing an option reloads the plugin and runs register again with the new options (Claude Code's Register contract).
+  if (!modeOn(options)) {
+    Object.assign(carried, { value: false, seen: false, hooksOff: false })
+    return
+  }
   on('settings.read', async ($, e, next) => {
     if (e.source !== undefined) return next(e)
     const seq = ++carried.seq

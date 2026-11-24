@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.1]
+
+### Fixed
+
+- The `settings.read` hook is registered only when `status_line` is `wrap` or `only`, so Claude Code's built-in guard no longer reports it skipped in sessions where the status line is off. `/nudge statusline wrap` turns it on.
+
 ## [0.5.0]
 
 ### Added
